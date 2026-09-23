@@ -62,13 +62,19 @@ async function readBlobAppointments(): Promise<StoredAppointment[]> {
   }
 }
 
-async function writeBlobAppointments(rows: StoredAppointment[]) {
-  await putBlob(BLOB_APPOINTMENTS_PATH, JSON.stringify(rows), {
+async function putJsonBlob(pathname: string, rows: unknown[]) {
+  await putBlob(pathname, JSON.stringify(rows), {
     access: "private",
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
+    // Minimiza cache CDN (mínimo soportado) para que list/create vean datos frescos.
+    cacheControlMaxAge: 60,
   });
+}
+
+async function writeBlobAppointments(rows: StoredAppointment[]) {
+  await putJsonBlob(BLOB_APPOINTMENTS_PATH, rows);
 }
 
 export function normalizePhoneKey(phone: string): string {
@@ -97,12 +103,7 @@ async function readBlobCustomers(): Promise<StoredCustomer[]> {
 }
 
 async function writeBlobCustomers(rows: StoredCustomer[]) {
-  await putBlob(BLOB_CUSTOMERS_PATH, JSON.stringify(rows), {
-    access: "private",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json",
-  });
+  await putJsonBlob(BLOB_CUSTOMERS_PATH, rows);
 }
 
 export interface UpsertCustomerProfileParams {

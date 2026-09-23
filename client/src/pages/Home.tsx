@@ -44,6 +44,15 @@ const STATUS_OPTIONS = [
   { value: "cancelado", label: "Cancelado" },
 ] as const;
 
+const STATUS_FLOW = [
+  { value: "pendiente", label: "Pendiente" },
+  { value: "confirmado", label: "Confirmado" },
+  { value: "en_camino", label: "En camino" },
+  { value: "en_proceso", label: "En proceso" },
+  { value: "finalizado", label: "Finalizado" },
+  { value: "cancelado", label: "Cancelado" },
+] as const;
+
 const TIME_SLOTS = [
   "08:00 - 09:30",
   "09:30 - 11:00",
@@ -174,14 +183,41 @@ export default function Home() {
 
   // Mutaciones
   const createMutation = trpc.appointments.create.useMutation({
-    onSuccess: () => {
-      toast.success("Turno agendado con éxito");
+    onSuccess: (created) => {
+      const dateLabel = created?.scheduledDate
+        ? created.scheduledDate.split("-").reverse().join("/")
+        : "";
+      toast.success(
+        dateLabel
+          ? `Turno agendado para el ${dateLabel}${created?.timeSlot ? ` · ${created.timeSlot}` : ""}`
+          : "Turno agendado con éxito"
+      );
+      if (created?.scheduledDate) {
+        setSelectedDate(created.scheduledDate);
+        setActiveTab("calendario");
+      }
+      if (created?.timeSlot) {
+        setSelectedSlot(created.timeSlot);
+      }
       utils.appointments.invalidate();
       setIsModalOpen(false);
       resetForm();
     },
     onError: (err) => {
       toast.error(`Error al agendar: ${err.message}`);
+    },
+  });
+
+  const updateStatusMutation = trpc.appointments.updateStatus.useMutation({
+    onSuccess: (updated) => {
+      toast.success("Estado actualizado");
+      if (updated) {
+        setSelectedAppointment(updated);
+      }
+      utils.appointments.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "No se pudo cambiar el estado");
     },
   });
 
@@ -968,6 +1004,37 @@ export default function Home() {
                         </div>
                       </div>
                       <div className="shrink-0">{getStatusBadge(selectedSlotAppointment.status)}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {STATUS_FLOW.filter((st) => st.value !== "cancelado").map((st) => {
+                        const isActive = selectedSlotAppointment.status === st.value;
+                        return (
+                          <button
+                            key={st.value}
+                            type="button"
+                            disabled={updateStatusMutation.isPending || isActive}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (st.value === "finalizado") {
+                                handleInitiateFinalize(selectedSlotAppointment);
+                                return;
+                              }
+                              updateStatusMutation.mutate({
+                                id: selectedSlotAppointment.id,
+                                status: st.value,
+                              });
+                            }}
+                            className={`min-h-9 px-2 py-1.5 rounded-lg text-[10px] font-bold border touch-manipulation active:scale-95 disabled:opacity-50 ${
+                              isActive
+                                ? "bg-red-600/25 border-red-500/50 text-red-200"
+                                : "bg-slate-950 border-slate-700 text-slate-400"
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div className="flex items-center gap-1.5 text-xs text-slate-400 rounded-xl bg-slate-950/70 border border-slate-800 p-2">
@@ -2041,6 +2108,45 @@ export default function Home() {
             </div>
 
             <div className="space-y-3 text-xs">
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-400 font-semibold">Estado del servicio</span>
+                  {getStatusBadge(selectedAppointment.status)}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {STATUS_FLOW.map((st) => {
+                    const isActive = selectedAppointment.status === st.value;
+                    return (
+                      <button
+                        key={st.value}
+                        type="button"
+                        disabled={updateStatusMutation.isPending || isActive}
+                        onClick={() => {
+                          if (st.value === "finalizado") {
+                            handleInitiateFinalize(selectedAppointment);
+                            return;
+                          }
+                          updateStatusMutation.mutate({
+                            id: selectedAppointment.id,
+                            status: st.value,
+                          });
+                        }}
+                        className={`min-h-10 px-2 py-2 rounded-xl text-[11px] font-bold border transition-all active:scale-95 touch-manipulation disabled:opacity-60 ${
+                          isActive
+                            ? "bg-red-600/20 border-red-500/50 text-red-200"
+                            : "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white"
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  Podés pasar por Pendiente → Confirmado → En camino → En proceso. “Finalizado” abre el cobro.
+                </p>
+              </div>
+
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1.5">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Cliente:</span>

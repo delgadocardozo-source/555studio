@@ -375,13 +375,18 @@ async function readBlobAppointments() {
     return [];
   }
 }
-async function writeBlobAppointments(rows) {
-  await putBlob(BLOB_APPOINTMENTS_PATH, JSON.stringify(rows), {
+async function putJsonBlob(pathname, rows) {
+  await putBlob(pathname, JSON.stringify(rows), {
     access: "private",
     addRandomSuffix: false,
     allowOverwrite: true,
-    contentType: "application/json"
+    contentType: "application/json",
+    // Minimiza cache CDN (mínimo soportado) para que list/create vean datos frescos.
+    cacheControlMaxAge: 60
   });
+}
+async function writeBlobAppointments(rows) {
+  await putJsonBlob(BLOB_APPOINTMENTS_PATH, rows);
 }
 function normalizePhoneKey(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -403,12 +408,7 @@ async function readBlobCustomers() {
   }
 }
 async function writeBlobCustomers(rows) {
-  await putBlob(BLOB_CUSTOMERS_PATH, JSON.stringify(rows), {
-    access: "private",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json"
-  });
+  await putJsonBlob(BLOB_CUSTOMERS_PATH, rows);
 }
 async function upsertCustomerProfile(params) {
   const phoneKey = normalizePhoneKey(params.clientPhone);
