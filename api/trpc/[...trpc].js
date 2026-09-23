@@ -379,6 +379,7 @@ async function writeBlobAppointments(rows) {
   await putBlob(BLOB_APPOINTMENTS_PATH, JSON.stringify(rows), {
     access: "private",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/json"
   });
 }
@@ -405,6 +406,7 @@ async function writeBlobCustomers(rows) {
   await putBlob(BLOB_CUSTOMERS_PATH, JSON.stringify(rows), {
     access: "private",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/json"
   });
 }
