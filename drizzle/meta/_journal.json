@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1790185288972,
+      "tag": "0000_abnormal_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1790185330837,
+      "tag": "0001_little_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1790186127667,
+      "tag": "0002_wakeful_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1790186576822,
+      "tag": "0003_great_yellow_claw",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1790193470516,
+      "tag": "0004_nice_vance_astro",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1790194796514,
+      "tag": "0005_warm_loki",
+      "breakpoints": true
+    }
+  ]
+}
