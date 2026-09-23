@@ -28,7 +28,8 @@ import {
   Banknote,
   Eye,
   SlidersHorizontal,
-  RotateCcw
+  RotateCcw,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -90,6 +91,7 @@ export default function Home() {
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingAppointmentId, setEditingAppointmentId] = useState<number | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isFinalizeModalOpen, setIsFinalizeModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
@@ -233,6 +235,34 @@ export default function Home() {
     },
   });
 
+  const updateMutation = trpc.appointments.update.useMutation({
+    onSuccess: (updated) => {
+      const dateLabel = updated?.scheduledDate
+        ? updated.scheduledDate.split("-").reverse().join("/")
+        : "";
+      toast.success(
+        dateLabel
+          ? `Reserva actualizada · ${dateLabel}${updated?.timeSlot ? ` · ${updated.timeSlot}` : ""}`
+          : "Reserva actualizada"
+      );
+      if (updated?.scheduledDate) {
+        setSelectedDate(updated.scheduledDate);
+        setActiveTab("calendario");
+      }
+      if (updated?.timeSlot) {
+        setSelectedSlot(updated.timeSlot);
+      }
+      setSelectedAppointment(updated);
+      utils.appointments.invalidate();
+      setIsModalOpen(false);
+      setEditingAppointmentId(null);
+      resetForm();
+    },
+    onError: (err) => {
+      toast.error(`Error al editar: ${err.message}`);
+    },
+  });
+
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
 
   const deleteMutation = trpc.appointments.delete.useMutation({
@@ -271,12 +301,72 @@ export default function Home() {
   };
 
   const handleOpenCreateModal = (presetDate?: string, presetSlot?: string) => {
+    setEditingAppointmentId(null);
+    resetForm();
     setFormData((prev) => ({
       ...prev,
       scheduledDate: presetDate || selectedDate,
-      timeSlot: presetSlot || prev.timeSlot || TIME_SLOTS[0],
+      timeSlot: presetSlot || TIME_SLOTS[0],
     }));
     setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (app: any) => {
+    let vehicles: FormVehicleItem[] = [{ id: "v1", type: "auto", model: "", plate: "" }];
+    try {
+      const parsed = typeof app.vehicles === "string" ? JSON.parse(app.vehicles) : app.vehicles;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        vehicles = parsed.map((v: any, idx: number) => ({
+          id: `v${idx + 1}`,
+          type: v.type === "camioneta" ? "camioneta" : "auto",
+          model: v.model || "",
+          plate: v.plate || "",
+        }));
+      } else {
+        vehicles = [
+          {
+            id: "v1",
+            type: app.vehicleType === "camioneta" ? "camioneta" : "auto",
+            model: app.vehicleModel || "",
+            plate: app.licensePlate || "",
+          },
+        ];
+      }
+    } catch {
+      vehicles = [
+        {
+          id: "v1",
+          type: app.vehicleType === "camioneta" ? "camioneta" : "auto",
+          model: app.vehicleModel || "",
+          plate: app.licensePlate || "",
+        },
+      ];
+    }
+
+    setEditingAppointmentId(app.id);
+    setFormData({
+      clientName: app.clientName || "",
+      clientPhone: app.clientPhone || "",
+      clientType: app.clientType || "particular",
+      companyName: app.companyName || "",
+      clientTaxId: app.clientTaxId || "",
+      cityZone: app.cityZone || "Asuncion",
+      address: app.address || "",
+      locationUrl: app.locationUrl || "",
+      addressReference: app.addressReference || "",
+      scheduledDate: app.scheduledDate || selectedDate,
+      timeSlot: app.timeSlot || TIME_SLOTS[0],
+      notes: app.notes || "",
+    });
+    setFormVehicles(vehicles);
+    setIsDetailOpen(false);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseFormModal = () => {
+    setIsModalOpen(false);
+    setEditingAppointmentId(null);
+    resetForm();
   };
 
   const handleSelectCustomerSuggestion = (customer: any) => {
@@ -304,7 +394,7 @@ export default function Home() {
       return;
     }
 
-    createMutation.mutate({
+    const payload = {
       ...formData,
       vehicles: validVehicles.map((v) => ({
         type: v.type,
@@ -314,7 +404,14 @@ export default function Home() {
       locationUrl: formData.locationUrl?.trim() || null,
       companyName: formData.clientType !== "particular" ? formData.companyName : null,
       clientTaxId: formData.clientTaxId?.trim() || null,
-    });
+    };
+
+    if (editingAppointmentId) {
+      updateMutation.mutate({ id: editingAppointmentId, data: payload });
+      return;
+    }
+
+    createMutation.mutate(payload);
   };
 
   const handleDateShift = (days: number) => {
@@ -1705,20 +1802,28 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: ALTA RÁPIDA DE SERVICIO */}
+      {/* MODAL: ALTA / EDICIÓN DE SERVICIO */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[92vh] sm:max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3.5">
               <div>
                 <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
-                  <Plus className="w-4 h-4 text-red-500" />
-                  Alta de Servicio a Domicilio
+                  {editingAppointmentId ? (
+                    <Pencil className="w-4 h-4 text-red-500" />
+                  ) : (
+                    <Plus className="w-4 h-4 text-red-500" />
+                  )}
+                  {editingAppointmentId ? "Editar Reserva" : "Alta de Servicio a Domicilio"}
                 </h3>
-                <p className="text-[11px] text-slate-400">555 Detail Studio</p>
+                <p className="text-[11px] text-slate-400">
+                  {editingAppointmentId
+                    ? "Podés cambiar fecha, horario, cliente, vehículos y dirección"
+                    : "555 Detail Studio"}
+                </p>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={handleCloseFormModal}
                 className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 touch-manipulation"
               >
                 <X className="w-5 h-5" />
@@ -2072,17 +2177,23 @@ export default function Home() {
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={handleCloseFormModal}
                   className="px-4 py-2.5 text-xs font-semibold text-slate-400 hover:text-white touch-manipulation"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || updateMutation.isPending}
                   className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-6 py-3 rounded-2xl transition-all shadow-lg shadow-red-600/30 flex items-center gap-1.5 cursor-pointer active:scale-95 touch-manipulation"
                 >
-                  {createMutation.isPending ? "Agendando..." : "Confirmar Servicio"}
+                  {editingAppointmentId
+                    ? updateMutation.isPending
+                      ? "Guardando..."
+                      : "Guardar Cambios"
+                    : createMutation.isPending
+                      ? "Agendando..."
+                      : "Confirmar Servicio"}
                 </button>
               </div>
             </form>
@@ -2282,6 +2393,15 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => handleOpenEditModal(selectedAppointment)}
+                className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-3 rounded-2xl transition-all flex items-center justify-center gap-2 active:scale-95 touch-manipulation cursor-pointer"
+              >
+                <Pencil className="w-4 h-4 text-red-400" />
+                <span>Editar Reserva</span>
+              </button>
 
               <button
                 onClick={() => handleInitiateFinalize(selectedAppointment)}
