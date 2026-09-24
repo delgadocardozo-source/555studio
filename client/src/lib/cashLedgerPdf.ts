@@ -92,21 +92,39 @@ export function buildCashLedgerText(
     lines.push("Por persona:");
     for (const p of stats.byPerson.slice(0, 20)) {
       lines.push(
-        `· ${p.person}: +${formatGs(p.ingresos)} / −${formatGs(p.egresos)} (${p.movements} mov.)`
+        `· ${p.person}: +${formatGs(p.ingresos)} / -${formatGs(p.egresos)} (${p.movements} mov.)`
       );
     }
     lines.push("");
   }
 
-  rows.forEach((row, idx) => {
-    const sign = row.type === "ingreso" ? "+" : "−";
-    lines.push(
-      `${idx + 1}) ${row.movementDate} · ${row.type.toUpperCase()} · ${sign}${formatGs(row.amount)}`
-    );
-    lines.push(`   ${row.person} · ${row.category}`);
-    if (row.description?.trim()) lines.push(`   ${row.description.trim()}`);
-    lines.push("");
-  });
+  const ingresos = rows.filter((r) => r.type === "ingreso");
+  const egresos = rows.filter((r) => r.type === "egreso");
+
+  lines.push(`INGRESOS (${ingresos.length}) · ${formatGs(stats.totalIngresos)}`);
+  if (ingresos.length === 0) {
+    lines.push("  (sin ingresos)");
+  } else {
+    ingresos.forEach((row, idx) => {
+      lines.push(
+        `  ${idx + 1}) ${row.movementDate} · +${formatGs(row.amount)} · ${row.person} · ${row.category}`
+      );
+      if (row.description?.trim()) lines.push(`     ${row.description.trim()}`);
+    });
+  }
+  lines.push("");
+
+  lines.push(`EGRESOS (${egresos.length}) · ${formatGs(stats.totalEgresos)}`);
+  if (egresos.length === 0) {
+    lines.push("  (sin egresos)");
+  } else {
+    egresos.forEach((row, idx) => {
+      lines.push(
+        `  ${idx + 1}) ${row.movementDate} · -${formatGs(row.amount)} · ${row.person} · ${row.category}`
+      );
+      if (row.description?.trim()) lines.push(`     ${row.description.trim()}`);
+    });
+  }
 
   return lines.join("\n").trim();
 }
@@ -241,7 +259,7 @@ export async function createCashLedgerPdf(
       doc.setTextColor(120, 120, 120);
       doc.text(`${p.movements} mov.`, marginX + contentW * 0.42, y);
       doc.setTextColor(170, 40, 45);
-      doc.text(`− ${formatGs(p.egresos)}`, marginX + contentW * 0.58, y);
+      doc.text(`- ${formatGs(p.egresos)}`, marginX + contentW * 0.58, y);
       doc.setTextColor(16, 120, 70);
       doc.text(`+ ${formatGs(p.ingresos)}`, pageW - marginX - 2, y, { align: "right" });
       y += 8;
@@ -249,21 +267,35 @@ export async function createCashLedgerPdf(
     y += 3;
   }
 
-  // Detalle
-  ensureSpace(10);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(40, 40, 40);
-  doc.text("Detalle de movimientos", marginX, y);
-  y += 5;
+  const ingresos = rows.filter((r) => r.type === "ingreso");
+  const egresos = rows.filter((r) => r.type === "egreso");
 
-  if (rows.length === 0) {
-    doc.setFont("helvetica", "normal");
+  const drawSection = (
+    title: string,
+    sectionRows: CashMovement[],
+    totalLabel: string,
+    totalRgb: [number, number, number],
+    isIngreso: boolean
+  ) => {
+    ensureSpace(12);
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.setTextColor(100, 100, 100);
-    doc.text("Sin movimientos en este filtro.", marginX, y + 6);
-  } else {
-    rows.forEach((row, idx) => {
+    doc.setTextColor(totalRgb[0], totalRgb[1], totalRgb[2]);
+    doc.text(title, marginX, y);
+    doc.setFontSize(8);
+    doc.text(totalLabel, pageW - marginX, y, { align: "right" });
+    y += 5;
+
+    if (sectionRows.length === 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(120, 120, 120);
+      doc.text(isIngreso ? "Sin ingresos en este filtro." : "Sin egresos en este filtro.", marginX, y);
+      y += 7;
+      return;
+    }
+
+    sectionRows.forEach((row, idx) => {
       const descLines = row.description?.trim()
         ? wrapText(doc, row.description.trim(), contentW - 6)
         : [];
@@ -281,15 +313,14 @@ export async function createCashLedgerPdf(
       const left = marginX + 3;
       let cy = y + 5;
 
-      const isIn = row.type === "ingreso";
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
       doc.setTextColor(18, 18, 18);
-      doc.text(row.person || "—", left, cy);
+      doc.text(row.person || "-", left, cy);
 
-      doc.setTextColor(isIn ? 16 : 170, isIn ? 120 : 40, isIn ? 70 : 45);
+      doc.setTextColor(totalRgb[0], totalRgb[1], totalRgb[2]);
       doc.text(
-        `${isIn ? "+" : "−"}${Number(row.amount).toLocaleString("es-PY")} Gs.`,
+        `${isIngreso ? "+" : "-"}${Number(row.amount).toLocaleString("es-PY")} Gs.`,
         pageW - marginX - 3,
         cy,
         { align: "right" }
@@ -299,11 +330,7 @@ export async function createCashLedgerPdf(
       doc.setFont("helvetica", "normal");
       doc.setFontSize(7.5);
       doc.setTextColor(80, 80, 80);
-      doc.text(
-        `${row.movementDate} · ${isIn ? "Ingreso" : "Egreso"} · ${row.category}`,
-        left,
-        cy
-      );
+      doc.text(`${row.movementDate} · ${row.category}`, left, cy);
       cy += 3.8;
 
       descLines.forEach((line) => {
@@ -315,6 +342,31 @@ export async function createCashLedgerPdf(
 
       y += blockH + 2.5;
     });
+    y += 3;
+  };
+
+  // Detalle separado: primero ingresos, luego egresos
+  if (rows.length === 0) {
+    ensureSpace(10);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text("Sin movimientos en este filtro.", marginX, y + 6);
+  } else {
+    drawSection(
+      "INGRESOS",
+      ingresos,
+      `${ingresos.length} · ${formatGs(stats.totalIngresos)}`,
+      [16, 120, 70],
+      true
+    );
+    drawSection(
+      "EGRESOS",
+      egresos,
+      `${egresos.length} · ${formatGs(stats.totalEgresos)}`,
+      [170, 40, 45],
+      false
+    );
   }
 
   doc.setFontSize(7.5);
