@@ -126,7 +126,7 @@ function withNormalizedTimeSlot(row) {
 
 // server/routers.ts
 import { z as z2 } from "zod";
-import { issueSignedToken, put as putBlob2, presignUrl } from "@vercel/blob";
+import { issueSignedToken, put as putBlob3, presignUrl } from "@vercel/blob";
 import { TRPCError as TRPCError3 } from "@trpc/server";
 
 // server/_core/cookies.ts
@@ -453,6 +453,18 @@ var appointments = mysqlTable("appointments", {
   paymentDeclaredAt: timestamp("paymentDeclaredAt"),
   // Origen del alta (interno o futuro portal cliente)
   source: mysqlEnum("source", ["interno_manual", "portal_cliente"]).default("interno_manual").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+});
+var cashMovementTypeEnum = mysqlEnum("cashMovementType", ["ingreso", "egreso"]);
+var cashMovements = mysqlTable("cash_movements", {
+  id: int("id").autoincrement().primaryKey(),
+  type: cashMovementTypeEnum.notNull(),
+  amount: int("amount").notNull(),
+  movementDate: varchar("movementDate", { length: 10 }).notNull(),
+  person: varchar("person", { length: 120 }).notNull(),
+  category: varchar("category", { length: 80 }).notNull(),
+  description: text("description"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
 });
@@ -924,6 +936,291 @@ async function findOverlappingAppointments(params) {
   });
 }
 
+// server/cashLedgerDb.ts
+import { and as and2, desc as desc2, eq as eq2, gte, like, lte, or as or2 } from "drizzle-orm";
+import { get as getBlob2, put as putBlob2 } from "@vercel/blob";
+
+// shared/cashLedger.ts
+function computeCashStats(rows) {
+  let totalIngresos = 0;
+  let totalEgresos = 0;
+  const personMap = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const person = (row.person || "Sin nombre").trim() || "Sin nombre";
+    const bucket = personMap.get(person) || { ingresos: 0, egresos: 0, movements: 0 };
+    bucket.movements += 1;
+    if (row.type === "ingreso") {
+      totalIngresos += row.amount;
+      bucket.ingresos += row.amount;
+    } else {
+      totalEgresos += row.amount;
+      bucket.egresos += row.amount;
+    }
+    personMap.set(person, bucket);
+  }
+  const byPerson = Array.from(personMap.entries()).map(([person, v]) => ({
+    person,
+    ingresos: v.ingresos,
+    egresos: v.egresos,
+    balance: v.ingresos - v.egresos,
+    movements: v.movements
+  })).sort((a, b) => b.egresos - a.egresos || a.person.localeCompare(b.person));
+  return {
+    totalIngresos,
+    totalEgresos,
+    balance: totalIngresos - totalEgresos,
+    count: rows.length,
+    byPerson
+  };
+}
+function matchCashFilters(row, filters = {}) {
+  if (filters.type && filters.type !== "todos" && row.type !== filters.type) return false;
+  if (filters.person && filters.person.trim()) {
+    const q = filters.person.trim().toLowerCase();
+    if (!(row.person || "").toLowerCase().includes(q)) return false;
+  }
+  if (filters.category && filters.category.trim() && filters.category !== "Todas") {
+    if (row.category !== filters.category) return false;
+  }
+  if (filters.dateFrom && row.movementDate < filters.dateFrom) return false;
+  if (filters.dateTo && row.movementDate > filters.dateTo) return false;
+  if (filters.search && filters.search.trim()) {
+    const q = filters.search.trim().toLowerCase();
+    const hay = `${row.person} ${row.category} ${row.description}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+// server/cashLedgerDb.ts
+var BLOB_CASH_PATH = "555-detail-agenda/data/cash-movements.json";
+function isVercelBlobRuntime2() {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+async function readBlobCash() {
+  const result = await getBlob2(BLOB_CASH_PATH, { access: "private", useCache: false });
+  if (!result || !result.stream) return [];
+  try {
+    const text2 = await new Response(result.stream).text();
+    const parsed = JSON.parse(text2);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+async function writeBlobCash(rows) {
+  await putBlob2(BLOB_CASH_PATH, JSON.stringify(rows), {
+    access: "private",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json",
+    cacheControlMaxAge: 60
+  });
+}
+var cashWriteChain = Promise.resolve();
+function withCashLock(fn) {
+  const run = cashWriteChain.then(fn, fn);
+  cashWriteChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
+function sanitizeInput(input) {
+  const amount = Math.round(Number(input.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("El monto debe ser un n\xFAmero mayor a 0");
+  }
+  const person = String(input.person || "").trim();
+  if (!person) throw new Error("Indic\xE1 qui\xE9n realiz\xF3 el movimiento");
+  const category = String(input.category || "").trim() || "Otros";
+  const movementDate = String(input.movementDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movementDate)) {
+    throw new Error("Fecha inv\xE1lida (YYYY-MM-DD)");
+  }
+  if (input.type !== "ingreso" && input.type !== "egreso") {
+    throw new Error("Tipo inv\xE1lido");
+  }
+  return {
+    type: input.type,
+    amount,
+    movementDate,
+    person,
+    category,
+    description: String(input.description || "").trim()
+  };
+}
+function sortCash(rows) {
+  return [...rows].sort((a, b) => {
+    const byDate = String(b.movementDate).localeCompare(String(a.movementDate));
+    if (byDate !== 0) return byDate;
+    return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+  });
+}
+function rowFromSql(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    amount: row.amount,
+    movementDate: row.movementDate,
+    person: row.person,
+    category: row.category,
+    description: row.description || "",
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt || ""),
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt || "")
+  };
+}
+async function listCashMovements(filters = {}) {
+  if (isVercelBlobRuntime2()) {
+    const rows2 = await readBlobCash();
+    return sortCash(rows2.filter((row) => matchCashFilters(row, filters)));
+  }
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.type && filters.type !== "todos") {
+    conditions.push(eq2(cashMovements.type, filters.type));
+  }
+  if (filters.person?.trim()) {
+    conditions.push(like(cashMovements.person, `%${filters.person.trim()}%`));
+  }
+  if (filters.category?.trim() && filters.category !== "Todas") {
+    conditions.push(eq2(cashMovements.category, filters.category.trim()));
+  }
+  if (filters.dateFrom) conditions.push(gte(cashMovements.movementDate, filters.dateFrom));
+  if (filters.dateTo) conditions.push(lte(cashMovements.movementDate, filters.dateTo));
+  if (filters.search?.trim()) {
+    const q = `%${filters.search.trim()}%`;
+    conditions.push(
+      or2(
+        like(cashMovements.person, q),
+        like(cashMovements.category, q),
+        like(cashMovements.description, q)
+      )
+    );
+  }
+  const query = db.select().from(cashMovements).orderBy(desc2(cashMovements.movementDate), desc2(cashMovements.id));
+  const rows = conditions.length > 0 ? await query.where(and2(...conditions)) : await query;
+  return rows.map(rowFromSql);
+}
+async function getCashMovementById(id) {
+  if (isVercelBlobRuntime2()) {
+    const rows2 = await readBlobCash();
+    return rows2.find((row) => row.id === id);
+  }
+  const db = await getDb();
+  if (!db) return void 0;
+  const rows = await db.select().from(cashMovements).where(eq2(cashMovements.id, id)).limit(1);
+  return rows[0] ? rowFromSql(rows[0]) : void 0;
+}
+async function createCashMovement(input) {
+  const payload = sanitizeInput(input);
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  if (isVercelBlobRuntime2()) {
+    return withCashLock(async () => {
+      const rows = await readBlobCash();
+      const created2 = {
+        ...payload,
+        id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      rows.push(created2);
+      await writeBlobCash(rows);
+      return created2;
+    });
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Base de datos no disponible");
+  const result = await db.insert(cashMovements).values({
+    type: payload.type,
+    amount: payload.amount,
+    movementDate: payload.movementDate,
+    person: payload.person,
+    category: payload.category,
+    description: payload.description || null
+  });
+  const insertId = Number(result[0]?.insertId || result.insertId || 0);
+  const created = await getCashMovementById(insertId);
+  if (!created) throw new Error("No se pudo crear el movimiento");
+  return created;
+}
+async function updateCashMovement(id, input) {
+  if (isVercelBlobRuntime2()) {
+    return withCashLock(async () => {
+      const rows = await readBlobCash();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) throw new Error("Movimiento no encontrado");
+      const merged2 = sanitizeInput({
+        type: input.type ?? rows[index].type,
+        amount: input.amount ?? rows[index].amount,
+        movementDate: input.movementDate ?? rows[index].movementDate,
+        person: input.person ?? rows[index].person,
+        category: input.category ?? rows[index].category,
+        description: input.description ?? rows[index].description
+      });
+      rows[index] = {
+        ...rows[index],
+        ...merged2,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      await writeBlobCash(rows);
+      return rows[index];
+    });
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Base de datos no disponible");
+  const existing = await getCashMovementById(id);
+  if (!existing) throw new Error("Movimiento no encontrado");
+  const merged = sanitizeInput({
+    type: input.type ?? existing.type,
+    amount: input.amount ?? existing.amount,
+    movementDate: input.movementDate ?? existing.movementDate,
+    person: input.person ?? existing.person,
+    category: input.category ?? existing.category,
+    description: input.description ?? existing.description
+  });
+  await db.update(cashMovements).set({
+    type: merged.type,
+    amount: merged.amount,
+    movementDate: merged.movementDate,
+    person: merged.person,
+    category: merged.category,
+    description: merged.description || null
+  }).where(eq2(cashMovements.id, id));
+  const updated = await getCashMovementById(id);
+  if (!updated) throw new Error("Movimiento no encontrado");
+  return updated;
+}
+async function deleteCashMovement(id) {
+  if (isVercelBlobRuntime2()) {
+    return withCashLock(async () => {
+      const rows = await readBlobCash();
+      const next = rows.filter((row) => row.id !== id);
+      if (next.length === rows.length) throw new Error("Movimiento no encontrado");
+      await writeBlobCash(next);
+      return { ok: true };
+    });
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Base de datos no disponible");
+  await db.delete(cashMovements).where(eq2(cashMovements.id, id));
+  return { ok: true };
+}
+async function getCashLedgerStats(filters = {}) {
+  const rows = await listCashMovements(filters);
+  return computeCashStats(rows);
+}
+async function listCashPersons() {
+  const rows = await listCashMovements({});
+  const set = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const p = (row.person || "").trim();
+    if (p) set.add(p);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
 // server/routers.ts
 function isPrivateVercelBlobUrl(url) {
   try {
@@ -1117,7 +1414,7 @@ var appRouter = router({
       const safeName = input.fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
       const key = `555-detail-agenda/receipts/${Date.now()}-${safeName}`;
       if (process.env.BLOB_READ_WRITE_TOKEN) {
-        const stored2 = await putBlob2(key, buffer, {
+        const stored2 = await putBlob3(key, buffer, {
           access: "private",
           contentType: input.contentType || "application/octet-stream"
         });
@@ -1224,6 +1521,84 @@ var appRouter = router({
         clientTaxId: z2.string().optional().nullable()
       })
     ).mutation(async ({ input }) => await upsertCustomerProfile(input))
+  }),
+  /**
+   * Libro de caja — independiente del cobro de turnos.
+   * Ingresos / egresos con responsable (persona) y filtros.
+   */
+  cashLedger: router({
+    list: publicProcedure.input(
+      z2.object({
+        type: z2.enum(["ingreso", "egreso", "todos"]).optional(),
+        person: z2.string().optional(),
+        category: z2.string().optional(),
+        dateFrom: z2.string().optional(),
+        dateTo: z2.string().optional(),
+        search: z2.string().optional()
+      }).optional()
+    ).query(async ({ input }) => await listCashMovements(input || {})),
+    stats: publicProcedure.input(
+      z2.object({
+        type: z2.enum(["ingreso", "egreso", "todos"]).optional(),
+        person: z2.string().optional(),
+        category: z2.string().optional(),
+        dateFrom: z2.string().optional(),
+        dateTo: z2.string().optional(),
+        search: z2.string().optional()
+      }).optional()
+    ).query(async ({ input }) => await getCashLedgerStats(input || {})),
+    persons: publicProcedure.query(async () => await listCashPersons()),
+    create: publicProcedure.input(
+      z2.object({
+        type: z2.enum(["ingreso", "egreso"]),
+        amount: z2.number().positive(),
+        movementDate: z2.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        person: z2.string().min(1),
+        category: z2.string().min(1),
+        description: z2.string().optional()
+      })
+    ).mutation(async ({ input }) => {
+      try {
+        return await createCashMovement(input);
+      } catch (err) {
+        throw new TRPCError3({
+          code: "BAD_REQUEST",
+          message: err?.message || "No se pudo registrar el movimiento"
+        });
+      }
+    }),
+    update: publicProcedure.input(
+      z2.object({
+        id: z2.number().int(),
+        data: z2.object({
+          type: z2.enum(["ingreso", "egreso"]).optional(),
+          amount: z2.number().positive().optional(),
+          movementDate: z2.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          person: z2.string().min(1).optional(),
+          category: z2.string().min(1).optional(),
+          description: z2.string().optional()
+        })
+      })
+    ).mutation(async ({ input }) => {
+      try {
+        return await updateCashMovement(input.id, input.data);
+      } catch (err) {
+        throw new TRPCError3({
+          code: "BAD_REQUEST",
+          message: err?.message || "No se pudo actualizar el movimiento"
+        });
+      }
+    }),
+    delete: publicProcedure.input(z2.object({ id: z2.number().int() })).mutation(async ({ input }) => {
+      try {
+        return await deleteCashMovement(input.id);
+      } catch (err) {
+        throw new TRPCError3({
+          code: "NOT_FOUND",
+          message: err?.message || "Movimiento no encontrado"
+        });
+      }
+    })
   })
 });
 
@@ -1500,7 +1875,7 @@ async function createContext(opts) {
 }
 
 // server/receiptProxy.ts
-import { get as getBlob2 } from "@vercel/blob";
+import { get as getBlob3 } from "@vercel/blob";
 function pathnameFromBlobUrl2(url) {
   const { pathname } = new URL(url);
   return decodeURIComponent(pathname.replace(/^\//, ""));
@@ -1529,7 +1904,7 @@ function registerReceiptProxy(app2) {
         res.status(400).send("URL de comprobante fuera del prefijo permitido");
         return;
       }
-      const result = await getBlob2(pathname, { access: "private", useCache: false });
+      const result = await getBlob3(pathname, { access: "private", useCache: false });
       if (!result || result.statusCode !== 200 || !result.stream) {
         res.status(404).send("Comprobante no encontrado. Puede que no se haya terminado de subir.");
         return;

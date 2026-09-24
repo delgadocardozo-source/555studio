@@ -14,6 +14,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { storagePut } from "./storage";
 import * as db from "./db";
+import * as cashDb from "./cashLedgerDb";
 
 function isPrivateVercelBlobUrl(url: string): boolean {
   try {
@@ -406,6 +407,104 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => await db.upsertCustomerProfile(input)),
+  }),
+
+  /**
+   * Libro de caja — independiente del cobro de turnos.
+   * Ingresos / egresos con responsable (persona) y filtros.
+   */
+  cashLedger: router({
+    list: publicProcedure
+      .input(
+        z
+          .object({
+            type: z.enum(["ingreso", "egreso", "todos"]).optional(),
+            person: z.string().optional(),
+            category: z.string().optional(),
+            dateFrom: z.string().optional(),
+            dateTo: z.string().optional(),
+            search: z.string().optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await cashDb.listCashMovements(input || {})),
+
+    stats: publicProcedure
+      .input(
+        z
+          .object({
+            type: z.enum(["ingreso", "egreso", "todos"]).optional(),
+            person: z.string().optional(),
+            category: z.string().optional(),
+            dateFrom: z.string().optional(),
+            dateTo: z.string().optional(),
+            search: z.string().optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await cashDb.getCashLedgerStats(input || {})),
+
+    persons: publicProcedure.query(async () => await cashDb.listCashPersons()),
+
+    create: publicProcedure
+      .input(
+        z.object({
+          type: z.enum(["ingreso", "egreso"]),
+          amount: z.number().positive(),
+          movementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          person: z.string().min(1),
+          category: z.string().min(1),
+          description: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await cashDb.createCashMovement(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar el movimiento",
+          });
+        }
+      }),
+
+    update: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          data: z.object({
+            type: z.enum(["ingreso", "egreso"]).optional(),
+            amount: z.number().positive().optional(),
+            movementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            person: z.string().min(1).optional(),
+            category: z.string().min(1).optional(),
+            description: z.string().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await cashDb.updateCashMovement(input.id, input.data);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo actualizar el movimiento",
+          });
+        }
+      }),
+
+    delete: publicProcedure
+      .input(z.object({ id: z.number().int() }))
+      .mutation(async ({ input }) => {
+        try {
+          return await cashDb.deleteCashMovement(input.id);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: err?.message || "Movimiento no encontrado",
+          });
+        }
+      }),
   }),
 });
 
