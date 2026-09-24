@@ -177,6 +177,17 @@ export default function Home() {
     }
   }, [appointments]);
 
+  const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen;
+  React.useEffect(() => {
+    if (!anyModalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.classList.add("modal-open");
+    return () => {
+      document.body.classList.remove("modal-open");
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [anyModalOpen]);
+
   const selectedSlotAppointments = useMemo(
     () => appointments.filter((appointment) => appointment.timeSlot === selectedSlot),
     [appointments, selectedSlot]
@@ -713,9 +724,9 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col antialiased selection:bg-red-600 selection:text-white pb-20 sm:pb-8">
+    <div className="min-h-dvh bg-[#050811] text-slate-100 flex flex-col antialiased selection:bg-red-600 selection:text-white pb-[calc(4.75rem+env(safe-area-inset-bottom))] sm:pb-8">
       {/* Top Header con Logo */}
-      <header className="border-b border-slate-800/80 bg-[#080d1a]/95 backdrop-blur sticky top-0 z-30 px-3.5 sm:px-6 py-2.5 sm:py-3">
+      <header className="border-b border-slate-800/80 bg-[#080d1a] sm:bg-[#080d1a]/95 sm:backdrop-blur sticky top-0 z-30 px-3.5 sm:px-6 pt-[max(0.625rem,env(safe-area-inset-top))] pb-2.5 sm:py-3">
         <div className="flex items-center justify-between gap-2 max-w-7xl mx-auto w-full">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="bg-white px-2 py-1 rounded shadow-sm flex items-center justify-center shrink-0">
@@ -743,7 +754,7 @@ export default function Home() {
           {/* Botón Desktop */}
           <button
             onClick={() => handleOpenCreateModal()}
-            className="hidden sm:flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-red-600/25 active:scale-95 shrink-0 cursor-pointer"
+            className="hidden sm:flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-colors shadow-lg shadow-red-600/25 shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>Nuevo Servicio</span>
@@ -857,7 +868,7 @@ export default function Home() {
             <div className="flex items-center justify-between sm:justify-end gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 w-full sm:w-auto">
               <button
                 onClick={() => handleDateShift(-1)}
-                className="p-1.5 hover:text-red-400 active:scale-95 text-slate-300 rounded-lg hover:bg-slate-800 touch-manipulation"
+                className="p-2 text-slate-300 rounded-lg hover:bg-slate-800 hover:text-red-400 transition-colors"
                 aria-label="Día anterior"
               >
                 <ChevronLeft className="w-5 h-5" />
@@ -875,7 +886,7 @@ export default function Home() {
 
               <button
                 onClick={() => handleDateShift(1)}
-                className="p-1.5 hover:text-red-400 active:scale-95 text-slate-300 rounded-lg hover:bg-slate-800 touch-manipulation"
+                className="p-2 text-slate-300 rounded-lg hover:bg-slate-800 hover:text-red-400 transition-colors"
                 aria-label="Día siguiente"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -1042,21 +1053,23 @@ export default function Home() {
         {activeTab === "calendario" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-slate-400 px-0.5">
-              <span>Franjas horarias del día</span>
-              <span className="font-semibold text-slate-200">{appointments.length} servicio(s) programados</span>
+              <span className="hidden sm:inline">Franjas horarias del día</span>
+              <span className="sm:hidden font-semibold text-slate-300">{appointments.length} servicio(s)</span>
+              <span className="hidden sm:inline font-semibold text-slate-200">{appointments.length} servicio(s) programados</span>
             </div>
 
-            {/* Vista móvil: selector de seis franjas + una sola orden activa */}
+            {/* Vista móvil: chips horizontales + una sola orden activa */}
             <div className="md:hidden space-y-3">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory no-scrollbar -mx-3.5 px-3.5 pb-0.5">
                 {TIME_SLOTS.map((slot) => {
                   const isSelected = selectedSlot === slot;
                   const hasService = appointments.some((appointment) => appointment.timeSlot === slot);
                   return (
                     <button
                       key={slot}
+                      type="button"
                       onClick={() => setSelectedSlot(slot)}
-                      className={`min-h-15 rounded-xl border px-2 py-2 text-left transition-all active:scale-95 touch-manipulation ${
+                      className={`snap-start shrink-0 min-w-[4.75rem] rounded-xl border px-3 py-2.5 text-left transition-colors ${
                         isSelected
                           ? "bg-red-600 border-red-500 text-white shadow-md shadow-red-600/30"
                           : hasService
@@ -1064,9 +1077,9 @@ export default function Home() {
                             : "bg-slate-900/70 border-slate-800 text-slate-400"
                       }`}
                     >
-                      <span className="block text-[11px] font-extrabold leading-tight">{slot.split(" - ")[0]}</span>
+                      <span className="block text-[12px] font-extrabold leading-tight">{slot.split(" - ")[0]}</span>
                       <span className={`block text-[9px] mt-0.5 font-semibold ${isSelected ? "text-red-100" : hasService ? "text-emerald-400" : "text-slate-500"}`}>
-                        {hasService ? "Con servicio" : "Disponible"}
+                        {hasService ? "Ocupado" : "Libre"}
                       </span>
                     </button>
                   );
@@ -1080,8 +1093,9 @@ export default function Home() {
                     <span className="text-xs font-extrabold text-white">{selectedSlot}</span>
                   </div>
                   <button
+                    type="button"
                     onClick={() => handleOpenCreateModal(selectedDate, selectedSlot)}
-                    className="inline-flex items-center gap-1 bg-red-600 active:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl active:scale-95 touch-manipulation"
+                    className="inline-flex items-center gap-1 bg-red-600 active:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5 stroke-[3]" />
                     Agendar
@@ -1090,49 +1104,27 @@ export default function Home() {
 
                 {selectedSlotAppointment ? (
                   <div className="p-3.5 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <span className="text-[10px] font-mono text-slate-400 block">{selectedSlotAppointment.code}</span>
-                        <h3 className="text-base font-extrabold text-white truncate">{selectedSlotAppointment.clientName}</h3>
-                        <div className="text-xs text-slate-300 flex items-center gap-1.5 mt-1">
-                          {selectedSlotAppointment.vehicleType === "auto" ? <Car className="w-4 h-4 text-blue-400" /> : <Truck className="w-4 h-4 text-purple-400" />}
-                          <span className="font-bold truncate">{selectedSlotAppointment.vehicleModel}</span>
-                          {selectedSlotAppointment.licensePlate && <span className="font-mono text-[10px] bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 shrink-0">{selectedSlotAppointment.licensePlate}</span>}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAppointment(selectedSlotAppointment);
+                        setIsDetailOpen(true);
+                      }}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-mono text-slate-400 block">{selectedSlotAppointment.code}</span>
+                          <h3 className="text-base font-extrabold text-white truncate">{selectedSlotAppointment.clientName}</h3>
+                          <div className="text-xs text-slate-300 flex items-center gap-1.5 mt-1">
+                            {selectedSlotAppointment.vehicleType === "auto" ? <Car className="w-4 h-4 text-blue-400" /> : <Truck className="w-4 h-4 text-purple-400" />}
+                            <span className="font-bold truncate">{selectedSlotAppointment.vehicleModel}</span>
+                            {selectedSlotAppointment.licensePlate && <span className="font-mono text-[10px] bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 shrink-0">{selectedSlotAppointment.licensePlate}</span>}
+                          </div>
                         </div>
+                        <div className="shrink-0">{getStatusBadge(selectedSlotAppointment.status)}</div>
                       </div>
-                      <div className="shrink-0">{getStatusBadge(selectedSlotAppointment.status)}</div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {STATUS_FLOW.filter((st) => st.value !== "cancelado").map((st) => {
-                        const isActive = selectedSlotAppointment.status === st.value;
-                        return (
-                          <button
-                            key={st.value}
-                            type="button"
-                            disabled={updateStatusMutation.isPending || isActive}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (st.value === "finalizado") {
-                                handleInitiateFinalize(selectedSlotAppointment);
-                                return;
-                              }
-                              updateStatusMutation.mutate({
-                                id: selectedSlotAppointment.id,
-                                status: st.value,
-                              });
-                            }}
-                            className={`min-h-9 px-2 py-1.5 rounded-lg text-[10px] font-bold border touch-manipulation active:scale-95 disabled:opacity-50 ${
-                              isActive
-                                ? "bg-red-600/25 border-red-500/50 text-red-200"
-                                : "bg-slate-950 border-slate-700 text-slate-400"
-                            }`}
-                          >
-                            {st.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    </button>
 
                     <div className="flex items-center gap-1.5 text-xs text-slate-400 rounded-xl bg-slate-950/70 border border-slate-800 p-2">
                       <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0" />
@@ -1145,24 +1137,33 @@ export default function Home() {
                           href={selectedSlotAppointment.locationUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold active:scale-95 touch-manipulation"
+                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold"
                         >
                           <Navigation className="w-4 h-4" /> GPS
                         </a>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => {
                             setSelectedAppointment(selectedSlotAppointment);
                             setIsDetailOpen(true);
                           }}
-                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold active:scale-95 touch-manipulation"
+                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold"
                         >
                           <Eye className="w-4 h-4" /> Detalle
                         </button>
                       )}
                       <button
+                        type="button"
+                        onClick={() => handleOpenEditModal(selectedSlotAppointment)}
+                        className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 border border-slate-600 text-white text-xs font-extrabold"
+                      >
+                        <Pencil className="w-4 h-4 text-red-400" /> Editar
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleInitiateFinalize(selectedSlotAppointment)}
-                        className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 active:bg-red-700 text-white text-xs font-extrabold shadow-md shadow-red-600/30 active:scale-95 touch-manipulation"
+                        className="h-11 col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 active:bg-red-700 text-white text-xs font-extrabold shadow-md shadow-red-600/30"
                       >
                         <CheckCircle2 className="w-4 h-4" /> {selectedSlotAppointment.status === "finalizado" ? "Cobro" : "Finalizar"}
                       </button>
@@ -1499,7 +1500,7 @@ export default function Home() {
                   Aún no hay clientes registrados. Se guardarán automáticamente con cada servicio creado.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:max-h-72 sm:overflow-y-auto sm:overscroll-contain">
                   {allCustomersList.map((cust: any) => (
                     <div
                       key={cust.id || cust.phoneKey}
@@ -1562,10 +1563,11 @@ export default function Home() {
       </main>
 
       {/* Barra de Acciones Flotante Fija en Celulares */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#080d1a]/95 backdrop-blur-md border-t border-slate-800/90 px-4 py-2.5 flex items-center justify-between gap-3">
+      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#080d1a] border-t border-slate-800/90 px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3">
         <button
+          type="button"
           onClick={() => setActiveTab("calendario")}
-          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold ${
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold transition-colors ${
             activeTab === "calendario" ? "text-red-400" : "text-slate-400"
           }`}
         >
@@ -1574,16 +1576,18 @@ export default function Home() {
         </button>
 
         <button
+          type="button"
           onClick={() => handleOpenCreateModal()}
-          className="flex items-center justify-center gap-1.5 bg-red-600 active:bg-red-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl shadow-lg shadow-red-600/40 active:scale-95 touch-manipulation cursor-pointer"
+          className="flex items-center justify-center gap-1.5 bg-red-600 active:bg-red-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl shadow-lg shadow-red-600/40 transition-colors cursor-pointer"
         >
           <Plus className="w-4 h-4 stroke-[3]" />
           <span>Agendar</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab("ordenes")}
-          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold ${
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold transition-colors ${
             activeTab === "ordenes" ? "text-red-400" : "text-slate-400"
           }`}
         >
@@ -1594,8 +1598,8 @@ export default function Home() {
 
       {/* MODAL: FINALIZAR SERVICIO Y REGISTRAR COBRO */}
       {isFinalizeModalOpen && selectedAppointment && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[92vh] sm:max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-hidden overscroll-none">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[min(92dvh,920px)] sm:max-h-[90dvh] overflow-y-auto sheet-scroll pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3.5">
               <div>
                 <span className="text-[10px] font-mono text-red-400">{selectedAppointment.code}</span>
@@ -1804,8 +1808,8 @@ export default function Home() {
 
       {/* MODAL: ALTA / EDICIÓN DE SERVICIO */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[92vh] sm:max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-hidden overscroll-none">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[min(92dvh,920px)] sm:max-h-[90dvh] overflow-y-auto sheet-scroll pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3.5">
               <div>
                 <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
@@ -2203,8 +2207,8 @@ export default function Home() {
 
       {/* MODAL: DETALLE DE SERVICIO */}
       {isDetailOpen && selectedAppointment && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[92vh] sm:max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-hidden overscroll-none">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl relative max-h-[min(92dvh,920px)] sm:max-h-[90dvh] overflow-y-auto sheet-scroll pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3.5">
               <div>
                 <span className="text-[10px] font-mono text-red-400">{selectedAppointment.code}</span>
