@@ -104,6 +104,7 @@ export default function Home() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [moveModeId, setMoveModeId] = useState<number | null>(null);
   const [dropHoverKey, setDropHoverKey] = useState<string | null>(null);
+  const [moveSheetOpen, setMoveSheetOpen] = useState(false);
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -226,6 +227,30 @@ export default function Home() {
   );
   const movingVehicleCount = movingAppointment ? appointmentVehicleCount(movingAppointment) : 1;
 
+  const moveAvailableStarts = useMemo(() => {
+    if (!movingAppointment) return [];
+    const occupied = dayAppointmentsSorted
+      .filter((a) => a.id !== movingAppointment.id && a.status !== "cancelado")
+      .map((a) =>
+        buildTimeSlot(getSlotStart(String(a.timeSlot || "")), appointmentVehicleCount(a))
+      );
+    return availableStartTimes(appointmentVehicleCount(movingAppointment), occupied);
+  }, [movingAppointment, dayAppointmentsSorted]);
+
+  const openMoveSheet = (app: any) => {
+    setMoveModeId(app.id);
+    setDraggingId(null);
+    setMoveSheetOpen(true);
+    setSelectedAppointmentId(app.id);
+  };
+
+  const closeMoveSheet = () => {
+    setMoveSheetOpen(false);
+    setMoveModeId(null);
+    setDraggingId(null);
+    setDropHoverKey(null);
+  };
+
   type TimelineItem =
     | { kind: "gap"; key: string; start: number; end: number; washes: number }
     | { kind: "appointment"; key: string; appointment: (typeof appointments)[number] };
@@ -292,7 +317,7 @@ export default function Home() {
     }
   }, [dayAppointmentsSorted, selectedAppointmentId]);
 
-  const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen;
+  const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen || moveSheetOpen;
   React.useEffect(() => {
     if (!anyModalOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -456,6 +481,7 @@ export default function Home() {
       setDraggingId(null);
       setMoveModeId(null);
       setDropHoverKey(null);
+      setMoveSheetOpen(false);
       utils.appointments.invalidate();
     },
     onError: (err) => {
@@ -532,8 +558,7 @@ export default function Home() {
     }
     const currentStart = getSlotStart(String(app.timeSlot || ""));
     if (currentStart === startTime && app.scheduledDate === selectedDate) {
-      setMoveModeId(null);
-      setDraggingId(null);
+      closeMoveSheet();
       toast.message("El turno ya está en ese horario");
       return;
     }
@@ -1264,7 +1289,7 @@ export default function Home() {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-0.5">
               <span>
-                Jornada {WORKDAY_START}–{WORKDAY_END} · arrastrá un turno al hueco libre (o tocá Mover)
+                Jornada {WORKDAY_START}–{WORKDAY_END} · tocá <strong className="text-amber-300">Mover</strong> para cambiar horario
               </span>
               <div className="flex items-center gap-2 flex-wrap justify-end">
                 <span className="font-semibold text-slate-200">
@@ -1320,7 +1345,7 @@ export default function Home() {
                 </div>
               )}
 
-              {moveModeId && movingAppointment && (
+              {moveModeId && movingAppointment && !moveSheetOpen && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-center justify-between gap-2">
                   <p className="text-xs text-amber-100 font-semibold">
                     Moviendo <strong>{movingAppointment.clientName}</strong>
@@ -1329,7 +1354,7 @@ export default function Home() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => setMoveModeId(null)}
+                    onClick={closeMoveSheet}
                     className="text-[11px] font-bold text-amber-200 underline shrink-0"
                   >
                     Cancelar
@@ -1339,7 +1364,7 @@ export default function Home() {
 
               {draggingId && movingAppointment && (
                 <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 font-semibold">
-                  Arrastrá a un hueco verde · {movingAppointment.clientName} (
+                  Soltá en un hueco verde · {movingAppointment.clientName} (
                   {formatDuration(durationForVehicles(movingVehicleCount))})
                 </div>
               )}
@@ -1436,17 +1461,6 @@ export default function Home() {
                 return (
                   <div
                     key={item.key}
-                    draggable={!rescheduleMutation.isPending}
-                    onDragStart={(e) => {
-                      setDraggingId(app.id);
-                      setMoveModeId(null);
-                      e.dataTransfer.setData("text/plain", String(app.id));
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragEnd={() => {
-                      setDraggingId(null);
-                      setDropHoverKey(null);
-                    }}
                     className={`rounded-2xl border p-3.5 sm:p-4 transition-all ${
                       isDragging ? "opacity-50 scale-[0.98]" : ""
                     } ${
@@ -1459,15 +1473,29 @@ export default function Home() {
                   >
                     <div className="flex items-start justify-between gap-2 border-b border-slate-800/90 pb-2.5 mb-3">
                       <div className="flex items-start gap-2 min-w-0">
-                        <button
-                          type="button"
-                          className="mt-0.5 hidden sm:inline-flex p-1.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-400 cursor-grab active:cursor-grabbing touch-manipulation"
-                          title="Arrastrar a un hueco libre"
+                        <div
+                          draggable={!rescheduleMutation.isPending}
+                          onDragStart={(e) => {
+                            setDraggingId(app.id);
+                            setMoveModeId(null);
+                            setMoveSheetOpen(false);
+                            e.dataTransfer.setData("text/plain", String(app.id));
+                            e.dataTransfer.effectAllowed = "move";
+                            // Evita que el drag “atrape” botones hijos
+                            if (e.dataTransfer.setDragImage) {
+                              e.dataTransfer.setDragImage(e.currentTarget.parentElement?.parentElement || e.currentTarget, 20, 20);
+                            }
+                          }}
+                          onDragEnd={() => {
+                            setDraggingId(null);
+                            setDropHoverKey(null);
+                          }}
+                          className="mt-0.5 hidden sm:inline-flex p-1.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-400 cursor-grab active:cursor-grabbing touch-none select-none"
+                          title="Arrastrá al hueco libre"
                           aria-label="Arrastrar turno"
-                          onMouseDown={(e) => e.stopPropagation()}
                         >
-                          <GripVertical className="w-4 h-4" />
-                        </button>
+                          <GripVertical className="w-4 h-4 pointer-events-none" />
+                        </div>
                         <button
                           type="button"
                           className="text-left min-w-0"
@@ -1547,18 +1575,12 @@ export default function Home() {
                       )}
                       <button
                         type="button"
-                        onClick={() => {
-                          setMoveModeId((prev) => (prev === app.id ? null : app.id));
-                          setDraggingId(null);
-                        }}
-                        className={`flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 px-2.5 rounded-xl border active:scale-95 touch-manipulation ${
-                          isMoveTarget
-                            ? "text-amber-100 bg-amber-600/30 border-amber-500/50"
-                            : "text-white bg-slate-800 border-slate-600"
-                        }`}
+                        onClick={() => openMoveSheet(app)}
+                        disabled={rescheduleMutation.isPending}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 px-2.5 rounded-xl border active:scale-95 touch-manipulation text-amber-100 bg-amber-600/25 border-amber-500/40"
                       >
-                        <GripVertical className="w-3.5 h-3.5 text-amber-400" />
-                        <span>{isMoveTarget ? "Cancelar" : "Mover"}</span>
+                        <GripVertical className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Mover</span>
                       </button>
                       <button
                         type="button"
@@ -2491,6 +2513,77 @@ export default function Home() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MOVER HORARIO */}
+      {moveSheetOpen && movingAppointment && (
+        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/70"
+            aria-label="Cerrar"
+            onClick={closeMoveSheet}
+          />
+          <div className="relative w-full sm:max-w-md max-h-[85dvh] overflow-hidden rounded-t-3xl sm:rounded-3xl border border-slate-700 bg-slate-950 shadow-2xl flex flex-col">
+            <div className="px-4 pt-4 pb-3 border-b border-slate-800">
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-700 sm:hidden" />
+              <h3 className="text-base font-extrabold text-white">Mover horario</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                <strong className="text-slate-200">{movingAppointment.clientName}</strong>
+                {" · "}
+                {appointmentVehicleCount(movingAppointment)} vehículo(s)
+                {" · "}
+                dura {formatDuration(durationForVehicles(movingVehicleCount))}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Ahora: {buildTimeSlot(getSlotStart(String(movingAppointment.timeSlot || "")), movingVehicleCount)}
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {moveAvailableStarts.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">
+                  No hay otro horario libre hoy para esta duración.
+                </p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {moveAvailableStarts.map((start) => {
+                    const slot = buildTimeSlot(start, movingVehicleCount);
+                    const current = getSlotStart(String(movingAppointment.timeSlot || "")) === start;
+                    return (
+                      <button
+                        key={start}
+                        type="button"
+                        disabled={rescheduleMutation.isPending || current}
+                        onClick={() => handleRescheduleToStart(movingAppointment, start)}
+                        className={`rounded-xl border px-2 py-3 text-center active:scale-95 touch-manipulation ${
+                          current
+                            ? "border-slate-700 bg-slate-900 text-slate-500"
+                            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                        }`}
+                      >
+                        <span className="block text-sm font-extrabold">{start}</span>
+                        <span className="block text-[10px] text-slate-400 mt-0.5">
+                          → {slot.split(" - ")[1]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-800 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <button
+                type="button"
+                onClick={closeMoveSheet}
+                className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 text-xs font-bold text-slate-300"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
