@@ -27,7 +27,7 @@ async function assertScheduleAvailable(params: {
   if (!fitsInWorkday(start, params.vehicleCount)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `El lavado de ${params.vehicleCount} vehículo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 07:30–18:00 partiendo de ${start}.`,
+      message: `El lavado de ${params.vehicleCount} vehículo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no se puede agarrar a las ${start}. Se aceptan inicios de 07:30 a 18:00 (puede terminar después).`,
     });
   }
 

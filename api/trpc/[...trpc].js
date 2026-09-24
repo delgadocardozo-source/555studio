@@ -27,19 +27,19 @@ var decodeOAuthState = (state) => {
 var MINUTES_PER_VEHICLE = 80;
 var START_INTERVAL_MINUTES = 5;
 var WORKDAY_START = "07:30";
-var WORKDAY_END = "18:00";
+var WORKDAY_LAST_START = "18:00";
 var START_TIMES = (() => {
   const starts = [];
-  const dayEnd = timeToMinutes(WORKDAY_END);
-  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += START_INTERVAL_MINUTES) {
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+  for (let m = timeToMinutes(WORKDAY_START); m <= lastStart; m += START_INTERVAL_MINUTES) {
     starts.push(minutesToTime(m));
   }
   return starts;
 })();
 var SLOT_BANDS = (() => {
   const bands = [];
-  const dayEnd = timeToMinutes(WORKDAY_END);
-  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += MINUTES_PER_VEHICLE) {
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+  for (let m = timeToMinutes(WORKDAY_START); m <= lastStart; m += MINUTES_PER_VEHICLE) {
     bands.push(`${minutesToTime(m)} - ${minutesToTime(m + MINUTES_PER_VEHICLE)}`);
   }
   return bands;
@@ -93,10 +93,9 @@ function timeSlotsOverlap(a, b) {
   if (!pa || !pb) return a === b;
   return rangesOverlap(pa.start, pa.end, pb.start, pb.end);
 }
-function fitsInWorkday(startTime, vehicleCount) {
+function fitsInWorkday(startTime, _vehicleCount = 1) {
   const start = timeToMinutes(startTime);
-  const end = start + durationForVehicles(vehicleCount);
-  return start >= timeToMinutes(WORKDAY_START) && end <= timeToMinutes(WORKDAY_END);
+  return start >= timeToMinutes(WORKDAY_START) && start <= timeToMinutes(WORKDAY_LAST_START);
 }
 
 // server/routers.ts
@@ -883,7 +882,7 @@ async function assertScheduleAvailable(params) {
   if (!fitsInWorkday(start, params.vehicleCount)) {
     throw new TRPCError3({
       code: "BAD_REQUEST",
-      message: `El lavado de ${params.vehicleCount} veh\xEDculo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 07:30\u201318:00 partiendo de ${start}.`
+      message: `El lavado de ${params.vehicleCount} veh\xEDculo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no se puede agarrar a las ${start}. Se aceptan inicios de 07:30 a 18:00 (puede terminar despu\xE9s).`
     });
   }
   const overlaps = await findOverlappingAppointments({
