@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "bundle:vercel-api": "esbuild server/vercel-api.ts --bundle --platform=node --format=esm --packages=external --outfile=api/trpc/[...trpc].js --alias:@shared=./shared",
+    "bundle:vercel-api": "esbuild server/vercel-api.ts --bundle --platform=node --format=esm --packages=external --outfile=api/trpc/[...trpc].js --alias:@shared=./shared && esbuild server/receipt-api.ts --bundle --platform=node --format=esm --packages=external --outfile=api/receipt.js",
     "build:vercel": "pnpm bundle:vercel-api && vite build",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc --noEmit",
