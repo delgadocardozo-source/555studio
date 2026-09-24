@@ -1,5 +1,10 @@
 import { jsPDF } from "jspdf";
-import { appointmentVehicleCount, isPendingWashStatus, parseTimeSlot } from "@shared/scheduling";
+import {
+  appointmentVehicleCount,
+  isPendingWashStatus,
+  normalizeTimeSlot,
+  parseTimeSlot,
+} from "@shared/scheduling";
 import { LOGO_555_PNG_BASE64 } from "./logo555Base64";
 
 const LOGO_DATA_URL = `data:image/png;base64,${LOGO_555_PNG_BASE64}`;
@@ -77,6 +82,12 @@ function parseVehicles(app: any): Array<{ type: string; model: string; plate?: s
   ];
 }
 
+function displayTimeSlot(app: any): string {
+  const raw = String(app?.timeSlot || "");
+  if (!raw) return "—";
+  return normalizeTimeSlot(raw, appointmentVehicleCount(app));
+}
+
 function vehicleLine(app: any): string {
   return parseVehicles(app)
     .map((v) => {
@@ -116,7 +127,7 @@ export function buildDayServicesText(date: string, appointments: any[]): string 
 
   rows.forEach((app, idx) => {
     const n = idx + 1;
-    lines.push(`${n}) ${app.timeSlot || "—"} · ${statusLabel(app.status)}`);
+    lines.push(`${n}) ${displayTimeSlot(app)} · ${statusLabel(app.status)}`);
     lines.push(`   ${app.clientName || "—"} · ${app.clientPhone || "sin tel"}`);
     lines.push(`   ${vehicleLine(app)}`);
     lines.push(`   ${app.cityZone || ""}: ${app.address || "—"}`);
@@ -237,7 +248,7 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(180, 25, 30);
-    doc.text(`${idx + 1}. ${app.timeSlot || "—"}`, left, cy);
+    doc.text(`${idx + 1}. ${displayTimeSlot(app)}`, left, cy);
 
     doc.setFontSize(9);
     doc.setTextColor(40, 40, 40);

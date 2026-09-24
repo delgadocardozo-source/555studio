@@ -8,10 +8,12 @@ import {
   computeFreeGaps,
   fitsInWorkday,
   mergeOccupiedRanges,
+  normalizeTimeSlot,
   timeToMinutes,
   washesThatFitInGap,
   earliestStartInGap,
   gapFitsVehicles,
+  withNormalizedTimeSlot,
 } from "../shared/scheduling";
 
 describe("scheduling continuum", () => {
@@ -27,7 +29,21 @@ describe("scheduling continuum", () => {
   it("calcula duración 1h20 por vehículo (puede terminar después de las 18)", () => {
     expect(buildTimeSlot("13:30", 1)).toBe("13:30 - 14:50");
     expect(buildTimeSlot("13:30", 2)).toBe("13:30 - 16:10");
+    expect(buildTimeSlot("13:30", 3)).toBe("13:30 - 17:30");
+    expect(buildTimeSlot("09:30", 3)).toBe("09:30 - 13:30");
     expect(buildTimeSlot("18:00", 1)).toBe("18:00 - 19:20");
+  });
+
+  it("normaliza franjas viejas de 90 min a N×80", () => {
+    expect(normalizeTimeSlot("09:30 - 11:00", 3)).toBe("09:30 - 13:30");
+    expect(normalizeTimeSlot("13:30 - 15:00", 1)).toBe("13:30 - 14:50");
+    expect(
+      withNormalizedTimeSlot({
+        timeSlot: "09:30 - 11:00",
+        vehicleCount: 3,
+        vehicles: "[{},{},{}]",
+      }).timeSlot
+    ).toBe("09:30 - 13:30");
   });
 
   it("deja hueco libre justo al terminar un lavado (sin franja)", () => {

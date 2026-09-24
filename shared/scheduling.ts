@@ -280,6 +280,28 @@ export function appointmentVehicleCount(row: {
   return 1;
 }
 
+/**
+ * Recalcula fin del turno: inicio + N×80 min.
+ * Corrige datos viejos guardados con franjas fijas de 90 min.
+ */
+export function normalizeTimeSlot(timeSlot: string, vehicleCount: number): string {
+  return buildTimeSlot(getSlotStart(timeSlot), vehicleCount);
+}
+
+/** Aplica duración real (1h20 por vehículo) al timeSlot de un turno. */
+export function withNormalizedTimeSlot<T extends { timeSlot?: string | null; vehicleCount?: number | null; vehicles?: unknown }>(
+  row: T
+): T {
+  const cars = appointmentVehicleCount(row);
+  const slot = String(row.timeSlot || "");
+  if (!slot) return { ...row, vehicleCount: cars };
+  return {
+    ...row,
+    vehicleCount: cars,
+    timeSlot: normalizeTimeSlot(slot, cars),
+  };
+}
+
 /** Estados que aún requieren lavado (cuentan en “agendados / a lavar”). */
 export function isPendingWashStatus(status: string | null | undefined): boolean {
   return status !== "finalizado" && status !== "cancelado";
