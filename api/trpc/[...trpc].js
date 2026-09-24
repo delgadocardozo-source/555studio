@@ -1075,6 +1075,34 @@ var appRouter = router({
       }
       return await updateAppointmentDetails(input.id, payload);
     }),
+    /** Mover turno a otro horario/fecha sin reabrir el formulario completo. */
+    reschedule: publicProcedure.input(
+      z2.object({
+        id: z2.number().int(),
+        scheduledDate: z2.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        startTime: z2.string().regex(/^\d{2}:\d{2}$/)
+      })
+    ).mutation(async ({ input }) => {
+      const existing = await getAppointmentById(input.id);
+      if (!existing) {
+        throw new TRPCError3({ code: "NOT_FOUND", message: "Turno no encontrado" });
+      }
+      if (existing.status === "cancelado") {
+        throw new TRPCError3({ code: "BAD_REQUEST", message: "No se puede mover un turno cancelado." });
+      }
+      const vehicleCount = Number(existing.vehicleCount) > 0 ? Number(existing.vehicleCount) : 1;
+      const nextDate = input.scheduledDate || existing.scheduledDate;
+      const normalizedSlot = await assertScheduleAvailable({
+        scheduledDate: nextDate,
+        timeSlot: buildTimeSlot(input.startTime, vehicleCount),
+        vehicleCount,
+        excludeId: input.id
+      });
+      return await updateAppointmentDetails(input.id, {
+        scheduledDate: nextDate,
+        timeSlot: normalizedSlot
+      });
+    }),
     delete: publicProcedure.input(z2.object({ id: z2.number().int() })).mutation(async ({ input }) => await deleteAppointment(input.id)),
     stats: publicProcedure.query(async () => await getDashboardStats())
   }),

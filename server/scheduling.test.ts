@@ -10,6 +10,8 @@ import {
   mergeOccupiedRanges,
   timeToMinutes,
   washesThatFitInGap,
+  earliestStartInGap,
+  gapFitsVehicles,
 } from "../shared/scheduling";
 
 describe("scheduling continuum", () => {
@@ -71,5 +73,12 @@ describe("scheduling continuum", () => {
       { start: 100, end: 250 },
       { start: 300, end: 320 },
     ]);
+  });
+
+  it("encuentra el primer inicio válido dentro de un hueco", () => {
+    const gap = { start: timeToMinutes("15:00"), end: timeToMinutes("18:00") };
+    expect(earliestStartInGap(gap, 1)).toBe("15:00");
+    expect(gapFitsVehicles(gap, 1)).toBe(true);
+    expect(gapFitsVehicles({ start: timeToMinutes("12:40"), end: timeToMinutes("13:30") }, 1)).toBe(false);
   });
 });
