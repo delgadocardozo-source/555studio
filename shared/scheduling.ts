@@ -172,6 +172,27 @@ export function washesThatFitInGap(gap: OccupiedRange, vehicleCount: number = 1)
   return Math.floor((gap.end - gap.start) / duration);
 }
 
+/** Primer inicio de la grilla que hace entrar N vehículos en el hueco. */
+export function earliestStartInGap(gap: OccupiedRange, vehicleCount: number = 1): string | null {
+  const duration = durationForVehicles(vehicleCount);
+  if (duration <= 0 || gap.end - gap.start < duration) return null;
+
+  const dayStart = timeToMinutes(WORKDAY_START);
+  let start = Math.max(gap.start, dayStart);
+  const offset = start - dayStart;
+  const rem = offset % START_INTERVAL_MINUTES;
+  if (rem !== 0) start += START_INTERVAL_MINUTES - rem;
+
+  if (start + duration <= gap.end && start >= dayStart) {
+    return minutesToTime(start);
+  }
+  return null;
+}
+
+export function gapFitsVehicles(gap: OccupiedRange, vehicleCount: number): boolean {
+  return earliestStartInGap(gap, vehicleCount) != null;
+}
+
 /**
  * Inicios disponibles para N vehículos dados los turnos ya ocupados.
  * Usa solape real: si el anterior termina a las 15:00, 15:00 / 15:05 / 15:15 quedan libres.

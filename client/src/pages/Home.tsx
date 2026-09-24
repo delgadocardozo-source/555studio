@@ -30,6 +30,7 @@ import {
   RotateCcw,
   Pencil,
   Printer,
+  GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
@@ -44,6 +45,7 @@ import {
   buildTimeSlot,
   computeFreeGaps,
   durationForVehicles,
+  earliestStartInGap,
   fitsInWorkday,
   formatDuration,
   getSlotStart,
@@ -99,6 +101,9 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview">("calendario");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<number | null>(null);
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [moveModeId, setMoveModeId] = useState<number | null>(null);
+  const [dropHoverKey, setDropHoverKey] = useState<string | null>(null);
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -201,12 +206,25 @@ export default function Home() {
       });
   }, [appointments]);
 
+  const movingAppointmentId = draggingId ?? moveModeId;
+
   const dayFreeGaps = useMemo(() => {
     const occupied = dayAppointmentsSorted
-      .map((a) => parseTimeSlot(String(a.timeSlot || "")))
+      .filter((a) => a.id !== movingAppointmentId)
+      .map((a) => {
+        const start = getSlotStart(String(a.timeSlot || ""));
+        const cars = appointmentVehicleCount(a);
+        return parseTimeSlot(buildTimeSlot(start, cars));
+      })
       .filter((r): r is { start: number; end: number } => r != null);
     return computeFreeGaps(occupied);
-  }, [dayAppointmentsSorted]);
+  }, [dayAppointmentsSorted, movingAppointmentId]);
+
+  const movingAppointment = useMemo(
+    () => dayAppointmentsSorted.find((a) => a.id === movingAppointmentId) ?? null,
+    [dayAppointmentsSorted, movingAppointmentId]
+  );
+  const movingVehicleCount = movingAppointment ? appointmentVehicleCount(movingAppointment) : 1;
 
   type TimelineItem =
     | { kind: "gap"; key: string; start: number; end: number; washes: number }
@@ -217,9 +235,15 @@ export default function Home() {
     let ai = 0;
     let gi = 0;
     const gaps = dayFreeGaps;
+    // Durante drag el card debe seguir en el DOM; en modo Mover (touch) lo ocultamos
+    // y usamos el banner + huecos ampliados.
+    const apps =
+      moveModeId && !draggingId
+        ? dayAppointmentsSorted.filter((a) => a.id !== moveModeId)
+        : dayAppointmentsSorted;
 
-    while (ai < dayAppointmentsSorted.length || gi < gaps.length) {
-      const app = dayAppointmentsSorted[ai];
+    while (ai < apps.length || gi < gaps.length) {
+      const app = apps[ai];
       const appStart = app
         ? parseTimeSlot(String(app.timeSlot || ""))?.start ?? Number.POSITIVE_INFINITY
         : Number.POSITIVE_INFINITY;
@@ -245,7 +269,7 @@ export default function Home() {
       }
     }
     return items;
-  }, [dayAppointmentsSorted, dayFreeGaps]);
+  }, [dayAppointmentsSorted, dayFreeGaps, moveModeId, draggingId]);
 
   const autosAgendadosDia = useMemo(() => {
     return appointments
@@ -424,6 +448,23 @@ export default function Home() {
     },
   });
 
+  const rescheduleMutation = trpc.appointments.reschedule.useMutation({
+    onSuccess: (updated) => {
+      toast.success(`Horario movido · ${updated?.timeSlot || ""}`);
+      if (updated?.id) setSelectedAppointmentId(updated.id);
+      setSelectedAppointment(updated);
+      setDraggingId(null);
+      setMoveModeId(null);
+      setDropHoverKey(null);
+      utils.appointments.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "No se pudo mover el turno");
+      setDraggingId(null);
+      setDropHoverKey(null);
+    },
+  });
+
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
 
   const deleteMutation = trpc.appointments.delete.useMutation({
@@ -477,6 +518,47 @@ export default function Home() {
       timeSlot: buildTimeSlot(start, 1),
     }));
     setIsModalOpen(true);
+  };
+
+  const handleRescheduleToStart = (app: any, startTime: string) => {
+    if (!app?.id || !startTime) return;
+    if (rescheduleMutation.isPending) return;
+    const cars = appointmentVehicleCount(app);
+    if (!fitsInWorkday(startTime, cars)) {
+      toast.error(
+        `Con ${cars} vehículo(s) necesitás ${formatDuration(durationForVehicles(cars))}. Ese hueco no alcanza.`
+      );
+      return;
+    }
+    const currentStart = getSlotStart(String(app.timeSlot || ""));
+    if (currentStart === startTime && app.scheduledDate === selectedDate) {
+      setMoveModeId(null);
+      setDraggingId(null);
+      toast.message("El turno ya está en ese horario");
+      return;
+    }
+    rescheduleMutation.mutate({
+      id: app.id,
+      scheduledDate: selectedDate,
+      startTime,
+    });
+  };
+
+  const handleDropOnGap = (gapStart: number, gapEnd: number) => {
+    if (!draggingId) return;
+    const app = dayAppointmentsSorted.find((a) => a.id === draggingId);
+    if (!app) {
+      setDraggingId(null);
+      return;
+    }
+    const start = earliestStartInGap({ start: gapStart, end: gapEnd }, appointmentVehicleCount(app));
+    if (!start) {
+      toast.error("Ese hueco no entra para la cantidad de vehículos del turno.");
+      setDraggingId(null);
+      setDropHoverKey(null);
+      return;
+    }
+    handleRescheduleToStart(app, start);
   };
 
   const handleOpenEditModal = (app: any) => {
@@ -1180,9 +1262,9 @@ export default function Home() {
         {/* VISTA 1: TIMELINE CONTINUO (por horario real) */}
         {activeTab === "calendario" && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-400 px-0.5 gap-2 flex-wrap">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-0.5">
               <span>
-                Jornada {WORKDAY_START}–{WORKDAY_END} · 1 auto = {formatDuration(MINUTES_PER_VEHICLE)} · inicios cada 5 min
+                Jornada {WORKDAY_START}–{WORKDAY_END} · arrastrá un turno al hueco libre (o tocá Mover)
               </span>
               <div className="flex items-center gap-2 flex-wrap justify-end">
                 <span className="font-semibold text-slate-200">
@@ -1238,27 +1320,88 @@ export default function Home() {
                 </div>
               )}
 
+              {moveModeId && movingAppointment && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-center justify-between gap-2">
+                  <p className="text-xs text-amber-100 font-semibold">
+                    Moviendo <strong>{movingAppointment.clientName}</strong>
+                    {" · "}
+                    {formatDuration(durationForVehicles(movingVehicleCount))} — tocá un hueco libre
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setMoveModeId(null)}
+                    className="text-[11px] font-bold text-amber-200 underline shrink-0"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+
+              {draggingId && movingAppointment && (
+                <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 font-semibold">
+                  Arrastrá a un hueco verde · {movingAppointment.clientName} (
+                  {formatDuration(durationForVehicles(movingVehicleCount))})
+                </div>
+              )}
+
               {dayTimeline.map((item) => {
                 if (item.kind === "gap") {
                   const startLabel = minutesToTime(item.start);
                   const endLabel = minutesToTime(item.end);
                   const canBook = item.washes > 0;
+                  const dropStart = movingAppointment
+                    ? earliestStartInGap(
+                        { start: item.start, end: item.end },
+                        movingVehicleCount
+                      )
+                    : null;
+                  const canDrop = Boolean(dropStart);
+                  const isHover = dropHoverKey === item.key && canDrop;
+
                   return (
                     <div
                       key={item.key}
-                      className="rounded-2xl border border-dashed border-emerald-500/30 bg-emerald-500/5 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2"
+                      onDragOver={(e) => {
+                        if (!draggingId || !canDrop) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        setDropHoverKey(item.key);
+                      }}
+                      onDragLeave={() => {
+                        if (dropHoverKey === item.key) setDropHoverKey(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleDropOnGap(item.start, item.end);
+                      }}
+                      onClick={() => {
+                        if (moveModeId && movingAppointment && dropStart) {
+                          handleRescheduleToStart(movingAppointment, dropStart);
+                        }
+                      }}
+                      className={`rounded-2xl border border-dashed px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 transition-colors ${
+                        isHover
+                          ? "border-emerald-400 bg-emerald-500/25 ring-2 ring-emerald-400/40"
+                          : canDrop && movingAppointmentId
+                            ? "border-emerald-400/60 bg-emerald-500/15 cursor-pointer"
+                            : "border-emerald-500/30 bg-emerald-500/5"
+                      }`}
                     >
                       <div className="min-w-0">
                         <p className="text-xs font-extrabold text-emerald-300">
                           Libre · {startLabel} – {endLabel}
                         </p>
                         <p className="text-[11px] text-slate-400 mt-0.5">
-                          {canBook
-                            ? `Caben hasta ${item.washes} lavado(s) de 1 auto · podés empezar a las ${startLabel}, ${minutesToTime(item.start + 5)}, ${minutesToTime(item.start + 15)}…`
-                            : "Hueco corto: no entra un lavado completo de 1h 20min"}
+                          {movingAppointmentId && canDrop
+                            ? `Soltá aquí → ${dropStart}–${buildTimeSlot(dropStart!, movingVehicleCount).split(" - ")[1]}`
+                            : movingAppointmentId && !canDrop
+                              ? `No entra este turno (${formatDuration(durationForVehicles(movingVehicleCount))})`
+                              : canBook
+                                ? `Caben hasta ${item.washes} lavado(s) de 1 auto · podés empezar a las ${startLabel}, ${minutesToTime(item.start + 5)}, ${minutesToTime(item.start + 15)}…`
+                                : "Hueco corto: no entra un lavado completo de 1h 20min"}
                         </p>
                       </div>
-                      {canBook && (
+                      {!movingAppointmentId && canBook && (
                         <button
                           type="button"
                           onClick={() => handleOpenCreateModal(selectedDate, startLabel)}
@@ -1268,45 +1411,85 @@ export default function Home() {
                           Agendar {startLabel}
                         </button>
                       )}
+                      {moveModeId && canDrop && dropStart && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            movingAppointment && handleRescheduleToStart(movingAppointment, dropStart)
+                          }
+                          className="inline-flex items-center gap-1 bg-emerald-600 active:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl shrink-0"
+                        >
+                          Mover a {dropStart}
+                        </button>
+                      )}
                     </div>
                   );
                 }
 
                 const app = item.appointment;
                 const cars = appointmentVehicleCount(app);
+                const displaySlot = buildTimeSlot(getSlotStart(String(app.timeSlot || "")), cars);
                 const isSelected = selectedDayAppointment?.id === app.id;
+                const isDragging = draggingId === app.id;
+                const isMoveTarget = moveModeId === app.id;
 
                 return (
                   <div
                     key={item.key}
+                    draggable={!rescheduleMutation.isPending}
+                    onDragStart={(e) => {
+                      setDraggingId(app.id);
+                      setMoveModeId(null);
+                      e.dataTransfer.setData("text/plain", String(app.id));
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      setDraggingId(null);
+                      setDropHoverKey(null);
+                    }}
                     className={`rounded-2xl border p-3.5 sm:p-4 transition-all ${
-                      isSelected
-                        ? "bg-slate-900 border-red-500/50 shadow-lg shadow-red-900/20"
-                        : "bg-slate-900/90 border-slate-700 shadow-md"
+                      isDragging ? "opacity-50 scale-[0.98]" : ""
+                    } ${
+                      isMoveTarget
+                        ? "bg-slate-900 border-amber-400/60 shadow-lg shadow-amber-900/20"
+                        : isSelected
+                          ? "bg-slate-900 border-red-500/50 shadow-lg shadow-red-900/20"
+                          : "bg-slate-900/90 border-slate-700 shadow-md"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 border-b border-slate-800/90 pb-2.5 mb-3">
-                      <button
-                        type="button"
-                        className="text-left min-w-0"
-                        onClick={() => {
-                          setSelectedAppointmentId(app.id);
-                          setSelectedAppointment(app);
-                          setIsDetailOpen(true);
-                        }}
-                      >
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
-                          <Clock className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                          <span className="font-extrabold">{app.timeSlot}</span>
-                          <span className="text-[10px] font-semibold text-emerald-400">
-                            · {cars} auto(s)
-                          </span>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-500 block mt-0.5">{app.code}</span>
-                        <h3 className="text-sm sm:text-base font-extrabold text-white truncate mt-0.5">
-                          {app.clientName}
-                        </h3>
-                      </button>
+                      <div className="flex items-start gap-2 min-w-0">
+                        <button
+                          type="button"
+                          className="mt-0.5 hidden sm:inline-flex p-1.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-400 cursor-grab active:cursor-grabbing touch-manipulation"
+                          title="Arrastrar a un hueco libre"
+                          aria-label="Arrastrar turno"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="text-left min-w-0"
+                          onClick={() => {
+                            setSelectedAppointmentId(app.id);
+                            setSelectedAppointment(app);
+                            setIsDetailOpen(true);
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
+                            <Clock className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                            <span className="font-extrabold">{displaySlot}</span>
+                            <span className="text-[10px] font-semibold text-emerald-400">
+                              · {cars} auto(s)
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500 block mt-0.5">{app.code}</span>
+                          <h3 className="text-sm sm:text-base font-extrabold text-white truncate mt-0.5">
+                            {app.clientName}
+                          </h3>
+                        </button>
+                      </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         {getStatusBadge(app.status)}
                         {getPaymentBadge(app.paymentStatus, app.paymentMethod)}
@@ -1362,6 +1545,21 @@ export default function Home() {
                           Sin GPS
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMoveModeId((prev) => (prev === app.id ? null : app.id));
+                          setDraggingId(null);
+                        }}
+                        className={`flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 px-2.5 rounded-xl border active:scale-95 touch-manipulation ${
+                          isMoveTarget
+                            ? "text-amber-100 bg-amber-600/30 border-amber-500/50"
+                            : "text-white bg-slate-800 border-slate-600"
+                        }`}
+                      >
+                        <GripVertical className="w-3.5 h-3.5 text-amber-400" />
+                        <span>{isMoveTarget ? "Cancelar" : "Mover"}</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleOpenEditModal(app)}
