@@ -1,10 +1,13 @@
 import { COOKIE_NAME } from "@shared/const";
 import {
+  appointmentVehicleCount,
   buildTimeSlot,
   durationForVehicles,
   fitsInWorkday,
   formatDuration,
   getSlotStart,
+  planMoveWithPush,
+  ScheduleItem,
 } from "@shared/scheduling";
 import { z } from "zod";
 import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
@@ -371,6 +374,8 @@ export const appRouter = router({
           id: z.number().int(),
           scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
           startTime: z.string().regex(/^\d{2}:\d{2}$/),
+          /** Si true, empuja turnos que bloquean el nuevo hueco (p. ej. mover un 4h más temprano). */
+          pushConflicts: z.boolean().optional().default(true),
         })
       )
       .mutation(async ({ input }) => {
@@ -385,8 +390,72 @@ export const appRouter = router({
         const vehicleCount =
           Number(existing.vehicleCount) > 0
             ? Number(existing.vehicleCount)
-            : 1;
+            : appointmentVehicleCount(existing);
         const nextDate = input.scheduledDate || existing.scheduledDate;
+
+        if (input.pushConflicts) {
+          const dayRows = await db.listAppointments({ date: String(nextDate) });
+          const items: ScheduleItem[] = dayRows.map((row) => ({
+            id: Number(row.id),
+            timeSlot: String(row.timeSlot || ""),
+            vehicleCount: appointmentVehicleCount(row),
+            clientName: String(row.clientName || ""),
+            status: row.status ?? null,
+          }));
+
+          // Si cambia de día, el turno movido se planifica solo contra el día destino.
+          const planItems =
+            String(nextDate) === String(existing.scheduledDate)
+              ? items
+              : [
+                  ...items.filter((i) => i.id !== input.id),
+                  {
+                    id: input.id,
+                    timeSlot: String(existing.timeSlot || ""),
+                    vehicleCount,
+                    clientName: String(existing.clientName || ""),
+                    status: existing.status ?? null,
+                  },
+                ];
+
+          const plan = planMoveWithPush(planItems, input.id, input.startTime);
+          if (!plan) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `No se puede empezar a las ${input.startTime}: no hay forma de acomodar los turnos siguientes sin pasar las 18:00. Probá otro inicio o mové antes el turno que bloquea.`,
+            });
+          }
+
+          const updates: Array<{ id: number; timeSlot: string }> = [
+            { id: input.id, timeSlot: plan.slot },
+            ...plan.pushes.map((p) => ({ id: p.id, timeSlot: p.toSlot })),
+          ];
+
+          if (String(nextDate) !== String(existing.scheduledDate)) {
+            await db.updateAppointmentDetails(input.id, {
+              scheduledDate: nextDate,
+              timeSlot: plan.slot,
+            });
+            const otherShifts = updates.filter((u) => u.id !== input.id);
+            if (otherShifts.length > 0) {
+              await db.applyScheduleShifts(otherShifts);
+            }
+          } else {
+            await db.applyScheduleShifts(updates);
+          }
+
+          const updated = await db.getAppointmentById(input.id);
+          return {
+            appointment: updated,
+            pushed: plan.pushes.map((p) => ({
+              id: p.id,
+              clientName: p.clientName,
+              fromSlot: p.fromSlot,
+              toSlot: p.toSlot,
+            })),
+          };
+        }
+
         const normalizedSlot = await assertScheduleAvailable({
           scheduledDate: nextDate,
           timeSlot: buildTimeSlot(input.startTime, vehicleCount),
@@ -394,10 +463,19 @@ export const appRouter = router({
           excludeId: input.id,
         });
 
-        return await db.updateAppointmentDetails(input.id, {
+        const appointment = await db.updateAppointmentDetails(input.id, {
           scheduledDate: nextDate,
           timeSlot: normalizedSlot,
         });
+        return { appointment, pushed: [] as Array<{ id: number; clientName: string; fromSlot: string; toSlot: string }> };
+      }),
+
+    /** Corrige solapes del día (p. ej. tras heal N×80) empujando turnos posteriores. */
+    sanitizeDay: publicProcedure
+      .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+      .mutation(async ({ input }) => {
+        const result = await db.sanitizeDaySchedule(input.date);
+        return result;
       }),
 
     delete: publicProcedure

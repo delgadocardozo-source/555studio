@@ -4,11 +4,16 @@ import {
   WORKDAY_START,
   WORKDAY_LAST_START,
   availableStartTimes,
+  availableStartsWithPush,
   buildTimeSlot,
   computeFreeGaps,
+  dayHasOverlaps,
+  findOverlappingPairs,
   fitsInWorkday,
   mergeOccupiedRanges,
   normalizeTimeSlot,
+  packDaySchedule,
+  planMoveWithPush,
   timeToMinutes,
   washesThatFitInGap,
   earliestStartInGap,
@@ -106,5 +111,81 @@ describe("scheduling continuum", () => {
     expect(gapFitsVehicles({ start: timeToMinutes("12:40"), end: timeToMinutes("13:30") }, 1)).toBe(
       false
     );
+  });
+});
+
+describe("sanitize + move with push", () => {
+  it("detecta solape Alejandro 09:30–13:30 vs Nicolás 11:00–12:20", () => {
+    const items = [
+      { id: 1, clientName: "Alejandro Veron", timeSlot: "09:30 - 13:30", vehicleCount: 3 },
+      { id: 2, clientName: "Nicolás Rodriguez", timeSlot: "11:00 - 12:20", vehicleCount: 1 },
+    ];
+    expect(dayHasOverlaps(items)).toBe(true);
+    expect(findOverlappingPairs(items)).toHaveLength(1);
+  });
+
+  it("sana el día empujando a Nicolás después de Alejandro", () => {
+    const items = [
+      { id: 1, clientName: "Alejandro Veron", timeSlot: "09:30 - 13:30", vehicleCount: 3 },
+      { id: 2, clientName: "Nicolás Rodriguez", timeSlot: "11:00 - 12:20", vehicleCount: 1 },
+    ];
+    const shifts = packDaySchedule(items);
+    expect(shifts).toEqual([
+      {
+        id: 2,
+        clientName: "Nicolás Rodriguez",
+        fromSlot: "11:00 - 12:20",
+        toSlot: "13:30 - 14:50",
+        start: "13:30",
+      },
+    ]);
+  });
+
+  it("permite mover Alejandro a 07:30 empujando a Nicolás a 11:30", () => {
+    const items = [
+      { id: 1, clientName: "Alejandro Veron", timeSlot: "09:30 - 13:30", vehicleCount: 3 },
+      { id: 2, clientName: "Nicolás Rodriguez", timeSlot: "11:00 - 12:20", vehicleCount: 1 },
+    ];
+    const plan = planMoveWithPush(items, 1, "07:30");
+    expect(plan).not.toBeNull();
+    expect(plan!.start).toBe("07:30");
+    expect(plan!.slot).toBe("07:30 - 11:30");
+    expect(plan!.direct).toBe(false);
+    expect(plan!.pushes).toEqual([
+      {
+        id: 2,
+        clientName: "Nicolás Rodriguez",
+        fromSlot: "11:00 - 12:20",
+        toSlot: "11:30 - 12:50",
+        start: "11:30",
+      },
+    ]);
+  });
+
+  it("availableStartsWithPush ofrece 07:30 aunque el hueco libre sea solo 3h30", () => {
+    const items = [
+      { id: 1, clientName: "Alejandro Veron", timeSlot: "09:30 - 13:30", vehicleCount: 3 },
+      { id: 2, clientName: "Nicolás Rodriguez", timeSlot: "11:00 - 12:20", vehicleCount: 1 },
+    ];
+    // Sin empuje: 07:30 no cabe (Nicolás corta a las 11:00)
+    const direct = availableStartTimes(3, ["11:00 - 12:20"]);
+    expect(direct).not.toContain("07:30");
+
+    const withPush = availableStartsWithPush(items, 1);
+    const early = withPush.find((p) => p.start === "07:30");
+    expect(early).toBeTruthy();
+    expect(early!.direct).toBe(false);
+    expect(early!.pushes[0]?.clientName).toBe("Nicolás Rodriguez");
+  });
+
+  it("mover a un hueco directo no empuja a nadie", () => {
+    const items = [
+      { id: 1, clientName: "A", timeSlot: "09:30 - 10:50", vehicleCount: 1 },
+      { id: 2, clientName: "B", timeSlot: "14:00 - 15:20", vehicleCount: 1 },
+    ];
+    const plan = planMoveWithPush(items, 1, "07:30");
+    expect(plan).not.toBeNull();
+    expect(plan!.direct).toBe(true);
+    expect(plan!.pushes).toEqual([]);
   });
 });

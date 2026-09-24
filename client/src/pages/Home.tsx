@@ -45,8 +45,10 @@ import {
   WORKDAY_LAST_START,
   appointmentVehicleCount,
   availableStartTimes,
+  availableStartsWithPush,
   buildTimeSlot,
   computeFreeGaps,
+  dayHasOverlaps,
   durationForVehicles,
   earliestStartInGap,
   fitsInWorkday,
@@ -55,6 +57,8 @@ import {
   isPendingWashStatus,
   minutesToTime,
   parseTimeSlot,
+  planMoveWithPush,
+  ScheduleItem,
   timeToMinutes,
   washesThatFitInGap,
 } from "@shared/scheduling";
@@ -241,31 +245,55 @@ export default function Home() {
     return computeFreeGaps(occupied);
   }, [dayAppointmentsSorted, movingAppointmentId]);
 
+  const dayScheduleItems: ScheduleItem[] = useMemo(
+    () =>
+      dayAppointmentsSorted.map((a) => ({
+        id: Number(a.id),
+        timeSlot: String(a.timeSlot || ""),
+        vehicleCount: appointmentVehicleCount(a),
+        clientName: String(a.clientName || ""),
+        status: a.status ?? null,
+      })),
+    [dayAppointmentsSorted]
+  );
+
+  const dayOverlapCount = useMemo(
+    () => (dayHasOverlaps(dayScheduleItems) ? 1 : 0),
+    [dayScheduleItems]
+  );
+
   const movingAppointment = useMemo(
     () => dayAppointmentsSorted.find((a) => a.id === movingAppointmentId) ?? null,
     [dayAppointmentsSorted, movingAppointmentId]
   );
   const movingVehicleCount = movingAppointment ? appointmentVehicleCount(movingAppointment) : 1;
 
-  const moveAvailableStarts = useMemo(() => {
+  /** Inicios viables: directo o empujando turnos que bloquean (p. ej. 4h más temprano). */
+  const movePlans = useMemo(() => {
     if (!movingAppointment) return [];
-    const occupied = dayAppointmentsSorted
-      .filter((a) => a.id !== movingAppointment.id && a.status !== "cancelado")
-      .map((a) =>
-        buildTimeSlot(getSlotStart(String(a.timeSlot || "")), appointmentVehicleCount(a))
-      );
-    return availableStartTimes(appointmentVehicleCount(movingAppointment), occupied);
-  }, [movingAppointment, dayAppointmentsSorted]);
+    return availableStartsWithPush(dayScheduleItems, Number(movingAppointment.id));
+  }, [movingAppointment, dayScheduleItems]);
+
+  const moveAvailableStarts = useMemo(() => movePlans.map((p) => p.start), [movePlans]);
+
+  const movePlanByStart = useMemo(() => {
+    const map = new Map<string, (typeof movePlans)[number]>();
+    for (const plan of movePlans) map.set(plan.start, plan);
+    return map;
+  }, [movePlans]);
 
   /** Huecos reales donde cabe el turno + inicios extremos (primero / último del hueco). */
   const moveFreeWindows = useMemo(() => {
     if (!movingAppointment) return [];
+    const directPlans = movePlans.filter((p) => p.direct);
     return dayFreeGaps
       .map((gap) => {
-        const startsInGap = moveAvailableStarts.filter((start) => {
-          const m = timeToMinutes(start);
-          return m >= gap.start && m < gap.end;
-        });
+        const startsInGap = directPlans
+          .map((p) => p.start)
+          .filter((start) => {
+            const m = timeToMinutes(start);
+            return m >= gap.start && m < gap.end;
+          });
         if (startsInGap.length === 0) return null;
         const first = startsInGap[0];
         const last = startsInGap[startsInGap.length - 1];
@@ -281,7 +309,16 @@ export default function Home() {
         };
       })
       .filter((w): w is NonNullable<typeof w> => w != null);
-  }, [dayFreeGaps, movingAppointment, movingVehicleCount, moveAvailableStarts]);
+  }, [dayFreeGaps, movingAppointment, movingVehicleCount, movePlans]);
+
+  /** Opciones “más temprano” que requieren empujar a otro turno. */
+  const movePushOptions = useMemo(() => {
+    if (!movingAppointment) return [];
+    const current = timeToMinutes(getSlotStart(String(movingAppointment.timeSlot || "")));
+    return movePlans
+      .filter((p) => !p.direct && timeToMinutes(p.start) < current)
+      .slice(0, 8);
+  }, [movePlans, movingAppointment]);
 
   const moveLastStartOption = useMemo(() => {
     if (!moveAvailableStarts.includes(WORKDAY_LAST_START)) return null;
@@ -298,11 +335,12 @@ export default function Home() {
     const preferred = new Set(moveFreeWindows.flatMap((w) => [w.start, w.lastStart]));
     if (current) preferred.add(current);
     preferred.add(WORKDAY_LAST_START);
+    for (const p of movePushOptions) preferred.add(p.start);
 
     const filtered = moveAvailableStarts.filter((start) => {
       if (moveShowAllStarts) return true;
       const mins = timeToMinutes(start);
-      // Grilla cómoda cada 15 min + inicios de hueco + horario actual
+      // Grilla cómoda cada 15 min + inicios de hueco + horario actual + empujes
       return preferred.has(start) || mins % 15 === 0;
     });
 
@@ -313,7 +351,7 @@ export default function Home() {
       else afternoon.push(start);
     }
     return { morning, afternoon, totalRaw: moveAvailableStarts.length };
-  }, [moveAvailableStarts, moveFreeWindows, moveShowAllStarts, movingAppointment]);
+  }, [moveAvailableStarts, moveFreeWindows, moveShowAllStarts, movingAppointment, movePushOptions]);
 
   /** Turnos que ocupan el resto del día (explica por qué no hay “hacia adelante”). */
   const moveBlockers = useMemo(() => {
@@ -577,8 +615,26 @@ export default function Home() {
   });
 
   const rescheduleMutation = trpc.appointments.reschedule.useMutation({
-    onSuccess: (updated) => {
-      toast.success(`Horario movido · ${updated?.timeSlot || ""}`);
+    onSuccess: (result) => {
+      const updated =
+        result && typeof result === "object" && "appointment" in result
+          ? (result as { appointment: any; pushed?: any[] }).appointment
+          : result;
+      const pushed =
+        result && typeof result === "object" && "pushed" in result
+          ? (result as { pushed?: any[] }).pushed || []
+          : [];
+      if (pushed.length > 0) {
+        const names = pushed
+          .slice(0, 2)
+          .map((p: { clientName: string; toSlot: string }) => `${p.clientName} → ${p.toSlot}`)
+          .join("; ");
+        toast.success(
+          `Movido a ${updated?.timeSlot || ""}. Se reacomodó: ${names}${pushed.length > 2 ? "…" : ""}`
+        );
+      } else {
+        toast.success(`Horario movido · ${updated?.timeSlot || ""}`);
+      }
       if (updated?.id) setSelectedAppointmentId(updated.id);
       setSelectedAppointment(updated);
       setDraggingId(null);
@@ -592,6 +648,20 @@ export default function Home() {
       setDraggingId(null);
       setDropHoverKey(null);
     },
+  });
+
+  const sanitizeDayMutation = trpc.appointments.sanitizeDay.useMutation({
+    onSuccess: (result) => {
+      if (result.shiftsApplied > 0) {
+        toast.success(`Agenda saneada: ${result.shiftsApplied} turno(s) reacomodado(s)`);
+      } else if (result.overlapsBefore > 0) {
+        toast.message("Había solapes pero no se pudieron reacomodar sin pasar las 18:00");
+      } else {
+        toast.message("El día ya estaba sin solapes");
+      }
+      utils.appointments.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "No se pudo sanear el día"),
   });
 
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
@@ -681,10 +751,22 @@ export default function Home() {
       toast.message("El turno ya está en ese horario");
       return;
     }
+
+    const plan =
+      movePlanByStart.get(startTime) ||
+      planMoveWithPush(dayScheduleItems, Number(app.id), startTime);
+    if (!plan) {
+      toast.error(
+        "Ese inicio no entra: habría que pasar las 18:00 al reacomodar los turnos siguientes."
+      );
+      return;
+    }
+
     rescheduleMutation.mutate({
       id: app.id,
       scheduledDate: selectedDate,
       startTime,
+      pushConflicts: true,
     });
   };
 
@@ -695,12 +777,20 @@ export default function Home() {
       setDraggingId(null);
       return;
     }
-    const start = earliestStartInGap({ start: gapStart, end: gapEnd }, appointmentVehicleCount(app));
+    const cars = appointmentVehicleCount(app);
+    let start = earliestStartInGap({ start: gapStart, end: gapEnd }, cars);
     if (!start) {
-      toast.error("Ese hueco no entra para la cantidad de vehículos del turno.");
-      setDraggingId(null);
-      setDropHoverKey(null);
-      return;
+      // Hueco corto: intentar el inicio del hueco empujando lo que bloquea.
+      const gapStartLabel = minutesToTime(gapStart);
+      const plan = planMoveWithPush(dayScheduleItems, Number(app.id), gapStartLabel);
+      if (plan) {
+        start = plan.start;
+      } else {
+        toast.error("Ese hueco no entra para la cantidad de vehículos del turno.");
+        setDraggingId(null);
+        setDropHoverKey(null);
+        return;
+      }
     }
     handleRescheduleToStart(app, start);
   };
@@ -1486,6 +1576,24 @@ export default function Home() {
               </div>
             </div>
 
+            {dayOverlapCount > 0 && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-amber-100 font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  Hay turnos solapados (p. ej. tras corregir duración). Reacomodá el día.
+                </p>
+                <button
+                  type="button"
+                  disabled={sanitizeDayMutation.isPending}
+                  onClick={() => sanitizeDayMutation.mutate({ date: selectedDate })}
+                  className="inline-flex items-center gap-1 rounded-lg bg-amber-500 text-slate-950 text-[11px] font-extrabold px-2.5 py-1.5 active:scale-95 disabled:opacity-60"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  {sanitizeDayMutation.isPending ? "Saneando…" : "Sanear día"}
+                </button>
+              </div>
+            )}
+
             <div className="space-y-2.5">
               {dayTimeline.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 px-4 py-8 text-center">
@@ -1544,7 +1652,16 @@ export default function Home() {
                         movingVehicleCount
                       )
                     : null;
-                  const canDrop = Boolean(dropStart);
+                  const pushPlan =
+                    movingAppointment && !dropStart
+                      ? planMoveWithPush(
+                          dayScheduleItems,
+                          Number(movingAppointment.id),
+                          startLabel
+                        )
+                      : null;
+                  const canDrop = Boolean(dropStart || pushPlan);
+                  const effectiveStart = dropStart || pushPlan?.start || null;
                   const isHover = dropHoverKey === item.key && canDrop;
 
                   return (
@@ -1564,8 +1681,8 @@ export default function Home() {
                         handleDropOnGap(item.start, item.end);
                       }}
                       onClick={() => {
-                        if (moveModeId && movingAppointment && dropStart) {
-                          handleRescheduleToStart(movingAppointment, dropStart);
+                        if (moveModeId && movingAppointment && effectiveStart) {
+                          handleRescheduleToStart(movingAppointment, effectiveStart);
                         }
                       }}
                       className={`rounded-2xl border border-dashed px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 transition-colors ${
@@ -1581,13 +1698,18 @@ export default function Home() {
                           Libre · {startLabel} – {endLabel}
                         </p>
                         <p className="text-[11px] text-slate-400 mt-0.5">
-                          {movingAppointmentId && canDrop
-                            ? `Soltá aquí → ${dropStart}–${buildTimeSlot(dropStart!, movingVehicleCount).split(" - ")[1]}`
-                            : movingAppointmentId && !canDrop
-                              ? `No entra este turno (${formatDuration(durationForVehicles(movingVehicleCount))})`
-                              : canBook
-                                ? `Caben hasta ${item.washes} lavado(s) de 1 auto · podés empezar a las ${startLabel}, ${minutesToTime(item.start + 5)}, ${minutesToTime(item.start + 15)}…`
-                                : "Hueco corto: no entra un lavado completo de 1h 20min"}
+                          {movingAppointmentId && dropStart
+                            ? `Soltá aquí → ${dropStart}–${buildTimeSlot(dropStart, movingVehicleCount).split(" - ")[1]}`
+                            : movingAppointmentId && pushPlan
+                              ? `Entra desde ${pushPlan.start} empujando ${pushPlan.pushes
+                                  .map((p) => p.clientName)
+                                  .slice(0, 2)
+                                  .join(", ")}${pushPlan.pushes.length > 2 ? "…" : ""}`
+                              : movingAppointmentId && !canDrop
+                                ? `No entra este turno (${formatDuration(durationForVehicles(movingVehicleCount))}) sin pasar las 18:00`
+                                : canBook
+                                  ? `Caben hasta ${item.washes} lavado(s) de 1 auto · podés empezar a las ${startLabel}, ${minutesToTime(item.start + 5)}, ${minutesToTime(item.start + 15)}…`
+                                  : "Hueco corto: no entra un lavado completo de 1h 20min"}
                         </p>
                       </div>
                       {!movingAppointmentId && canBook && (
@@ -1600,15 +1722,18 @@ export default function Home() {
                           Agendar {startLabel}
                         </button>
                       )}
-                      {moveModeId && canDrop && dropStart && (
+                      {moveModeId && canDrop && effectiveStart && (
                         <button
                           type="button"
                           onClick={() =>
-                            movingAppointment && handleRescheduleToStart(movingAppointment, dropStart)
+                            movingAppointment &&
+                            handleRescheduleToStart(movingAppointment, effectiveStart)
                           }
                           className="inline-flex items-center gap-1 bg-emerald-600 active:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl shrink-0"
                         >
-                          Mover a {dropStart}
+                          {pushPlan && !dropStart
+                            ? `Mover a ${effectiveStart} (reacomoda)`
+                            : `Mover a ${effectiveStart}`}
                         </button>
                       )}
                     </div>
@@ -2772,12 +2897,51 @@ export default function Home() {
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4 overscroll-contain">
-              {moveFreeWindows.length === 0 && moveAvailableStarts.length === 0 ? (
+              {moveFreeWindows.length === 0 &&
+              moveAvailableStarts.length === 0 &&
+              movePushOptions.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-8">
-                  No hay otro horario libre hoy para esta duración.
+                  No hay otro horario libre hoy para esta duración (ni empujando turnos).
                 </p>
               ) : (
                 <>
+                  {movePushOptions.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-sky-300 mb-2">
+                        Más temprano (reacomoda)
+                      </p>
+                      <div className="space-y-2">
+                        {movePushOptions.map((plan) => {
+                          const current =
+                            getSlotStart(String(movingAppointment.timeSlot || "")) === plan.start;
+                          const pushNames = plan.pushes
+                            .map((p) => `${p.clientName} → ${p.start}`)
+                            .slice(0, 2)
+                            .join("; ");
+                          return (
+                            <button
+                              key={`push-${plan.start}`}
+                              type="button"
+                              disabled={rescheduleMutation.isPending || current}
+                              onClick={() =>
+                                handleRescheduleToStart(movingAppointment, plan.start)
+                              }
+                              className="w-full rounded-2xl border border-sky-500/40 bg-sky-500/10 px-3 py-3 text-left active:scale-[0.99] touch-manipulation disabled:opacity-50"
+                            >
+                              <span className="block text-base font-extrabold text-white">
+                                Empezar {plan.start} → {plan.slot.split(" - ")[1]}
+                              </span>
+                              <span className="block text-[11px] text-sky-200/90 mt-1 leading-snug">
+                                Empuja: {pushNames}
+                                {plan.pushes.length > 2 ? "…" : ""}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {moveLastStartOption && (
                     <button
                       type="button"
@@ -2802,7 +2966,7 @@ export default function Home() {
                   {moveFreeWindows.length > 0 && (
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 mb-2">
-                        Huecos libres
+                        Huecos libres (sin empujar)
                       </p>
                       <div className="space-y-2">
                         {moveFreeWindows.map((win) => {
@@ -2869,6 +3033,8 @@ export default function Home() {
                             const current =
                               getSlotStart(String(movingAppointment.timeSlot || "")) === start;
                             const isLast = start === WORKDAY_LAST_START;
+                            const plan = movePlanByStart.get(start);
+                            const needsPush = Boolean(plan && !plan.direct);
                             return (
                               <button
                                 key={start}
@@ -2878,14 +3044,17 @@ export default function Home() {
                                 className={`rounded-xl border px-2 py-3 text-center active:scale-95 touch-manipulation ${
                                   current
                                     ? "border-slate-700 bg-slate-900 text-slate-500"
-                                    : isLast
-                                      ? "border-red-500/50 bg-red-600/20 text-white"
-                                      : "border-slate-600 bg-slate-900 text-slate-100 hover:border-emerald-500/50"
+                                    : needsPush
+                                      ? "border-sky-500/50 bg-sky-500/15 text-white"
+                                      : isLast
+                                        ? "border-red-500/50 bg-red-600/20 text-white"
+                                        : "border-slate-600 bg-slate-900 text-slate-100 hover:border-emerald-500/50"
                                 }`}
                               >
                                 <span className="block text-sm font-extrabold">{start}</span>
                                 <span className="block text-[10px] text-slate-400 mt-0.5">
                                   → {slot.split(" - ")[1]}
+                                  {needsPush ? " · reacomoda" : ""}
                                 </span>
                               </button>
                             );
