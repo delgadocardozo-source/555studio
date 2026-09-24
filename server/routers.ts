@@ -122,14 +122,26 @@ export const appRouter = router({
               },
             ];
 
-        const computedVehicles = rawList.map((v) => ({
+        const catalogVehicles = rawList.map((v) => ({
           type: v.type,
           model: v.model.trim(),
           plate: v.plate?.trim() || null,
           price: v.type === "auto" ? 90000 : 120000,
         }));
 
-        const totalServicePrice = computedVehicles.reduce((acc, curr) => acc + curr.price, 0);
+        const catalogTotal = catalogVehicles.reduce((acc, curr) => acc + curr.price, 0);
+        const totalServicePrice =
+          input.servicePrice != null && input.servicePrice > 0 ? input.servicePrice : catalogTotal;
+
+        // Si el total es custom, repartimos en el primer vehículo y dejamos el resto en 0
+        // para que la suma coincida con lo cobrado (auditoría simple).
+        const computedVehicles =
+          totalServicePrice === catalogTotal
+            ? catalogVehicles
+            : catalogVehicles.map((v, idx) =>
+                idx === 0 ? { ...v, price: totalServicePrice } : { ...v, price: 0 }
+              );
+
         const primary = computedVehicles[0];
         const normalizedTimeSlot = await assertScheduleAvailable({
           scheduledDate: input.scheduledDate,
@@ -216,20 +228,31 @@ export const appRouter = router({
           payload.clientTaxId = clientTaxId?.trim() ? clientTaxId.trim() : null;
         }
         if (vehicles) {
-          const computed = vehicles.map((v) => ({
+          const catalog = vehicles.map((v) => ({
             type: v.type,
             model: v.model.trim(),
             plate: v.plate?.trim() || null,
             price: v.type === "auto" ? 90000 : 120000,
           }));
+          const catalogTotal = catalog.reduce((acc, curr) => acc + curr.price, 0);
+          const total =
+            input.data.servicePrice != null && input.data.servicePrice > 0
+              ? input.data.servicePrice
+              : catalogTotal;
+          const computed =
+            total === catalogTotal
+              ? catalog
+              : catalog.map((v, idx) => (idx === 0 ? { ...v, price: total } : { ...v, price: 0 }));
           payload.vehicles = JSON.stringify(computed);
           payload.vehicleCount = computed.length;
-          payload.servicePrice = computed.reduce((acc, curr) => acc + curr.price, 0);
+          payload.servicePrice = total;
           if (computed[0]) {
             payload.vehicleType = computed[0].type;
             payload.vehicleModel = computed[0].model;
             payload.licensePlate = computed[0].plate;
           }
+        } else if (input.data.servicePrice != null && input.data.servicePrice > 0) {
+          payload.servicePrice = input.data.servicePrice;
         }
 
         const existing = await db.getAppointmentById(input.id);

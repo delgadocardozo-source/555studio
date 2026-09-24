@@ -149,6 +149,9 @@ export default function Home() {
   const [formVehicles, setFormVehicles] = useState<FormVehicleItem[]>([
     { id: "v1", type: "auto", model: "", plate: "" },
   ]);
+  /** Precio cobrado (editable). Si priceIsCustom=false, sigue la tarifa estándar. */
+  const [formServicePrice, setFormServicePrice] = useState(90000);
+  const [priceIsCustom, setPriceIsCustom] = useState(false);
 
   React.useEffect(() => {
     setFormData((prev) => {
@@ -160,6 +163,11 @@ export default function Home() {
   const totalCalculatedPrice = useMemo(() => {
     return formVehicles.reduce((acc, curr) => acc + (curr.type === "auto" ? 90000 : 120000), 0);
   }, [formVehicles]);
+
+  React.useEffect(() => {
+    if (priceIsCustom) return;
+    setFormServicePrice(totalCalculatedPrice);
+  }, [totalCalculatedPrice, priceIsCustom]);
 
   // Consultas tRPC
   const { data: stats } = trpc.appointments.stats.useQuery();
@@ -602,6 +610,8 @@ export default function Home() {
       notes: "",
     });
     setFormVehicles([{ id: "v1", type: "auto", model: "", plate: "" }]);
+    setFormServicePrice(90000);
+    setPriceIsCustom(false);
   };
 
   const clearFilters = () => {
@@ -719,6 +729,18 @@ export default function Home() {
       notes: app.notes || "",
     });
     setFormVehicles(vehicles);
+    const catalogTotal = vehicles.reduce(
+      (sum, v) => sum + (v.type === "auto" ? 90000 : 120000),
+      0
+    );
+    const savedPrice = Number(app.servicePrice);
+    if (Number.isFinite(savedPrice) && savedPrice > 0) {
+      setFormServicePrice(savedPrice);
+      setPriceIsCustom(savedPrice !== catalogTotal);
+    } else {
+      setFormServicePrice(catalogTotal);
+      setPriceIsCustom(false);
+    }
     setIsDetailOpen(false);
     setIsModalOpen(true);
   };
@@ -757,6 +779,7 @@ export default function Home() {
     const payload = {
       ...formData,
       timeSlot: formComputedSlot,
+      servicePrice: formServicePrice,
       vehicles: validVehicles.map((v) => ({
         type: v.type,
         model: v.model.trim(),
@@ -766,6 +789,11 @@ export default function Home() {
       companyName: formData.clientType !== "particular" ? formData.companyName : null,
       clientTaxId: formData.clientTaxId?.trim() || null,
     };
+
+    if (!Number.isFinite(formServicePrice) || formServicePrice <= 0) {
+      toast.error("Ingresá un precio válido mayor a 0");
+      return;
+    }
 
     if (!fitsInWorkday(formStartTime, validVehicles.length)) {
       toast.error(
@@ -2464,15 +2492,49 @@ export default function Home() {
                   ))}
                 </div>
 
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
-                  <span className="text-slate-400 font-semibold">Total Consolidado ({formVehicles.length} vehículos):</span>
-                  <span className="text-sm sm:text-base font-extrabold text-red-400 font-display">
-                    {totalCalculatedPrice.toLocaleString("es-PY")} Gs.
-                  </span>
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-slate-400 font-semibold text-xs">
+                      Precio a cobrar ({formVehicles.length} vehículo
+                      {formVehicles.length > 1 ? "s" : ""})
+                    </label>
+                    {priceIsCustom && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPriceIsCustom(false);
+                          setFormServicePrice(totalCalculatedPrice);
+                        }}
+                        className="text-[10px] font-bold text-amber-300 underline"
+                      >
+                        Usar tarifa estándar ({totalCalculatedPrice.toLocaleString("es-PY")})
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      step={1000}
+                      value={formServicePrice}
+                      onChange={(e) => {
+                        const next = Number(e.target.value);
+                        setFormServicePrice(Number.isFinite(next) ? next : 0);
+                        setPriceIsCustom(true);
+                      }}
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-extrabold text-red-400 focus:outline-none focus:border-red-500"
+                    />
+                    <span className="text-xs font-bold text-slate-400 shrink-0">Gs.</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Tarifa de lista: {totalCalculatedPrice.toLocaleString("es-PY")} Gs. · Podés bajar o
+                    subir el monto (ej. servicio especial 50.000).
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Tiempo estimado: <strong className="text-slate-200">{formDurationLabel}</strong> (
+                    {formVehicleCount} × 1h 20min)
+                  </p>
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Tiempo estimado: <strong className="text-slate-200">{formDurationLabel}</strong> ({formVehicleCount} × 1h 20min)
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
