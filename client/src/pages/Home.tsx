@@ -33,19 +33,22 @@ import {
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import {
-  SLOT_BANDS,
   START_TIMES,
   MINUTES_PER_VEHICLE,
-  appointmentStartsInBand,
+  WORKDAY_START,
+  WORKDAY_END,
   appointmentVehicleCount,
+  availableStartTimes,
   buildTimeSlot,
+  computeFreeGaps,
   durationForVehicles,
   fitsInWorkday,
   formatDuration,
   getSlotStart,
   isPendingWashStatus,
+  minutesToTime,
   parseTimeSlot,
-  timeSlotOverlapsRange,
+  washesThatFitInGap,
 } from "@shared/scheduling";
 
 // Zonas y opciones
@@ -93,7 +96,7 @@ export default function Home() {
   const [clientTypeFilter, setClientTypeFilter] = useState<string>("todos");
   const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview">("calendario");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [selectedSlot, setSelectedSlot] = useState<string>(SLOT_BANDS[0]);
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<number | null>(null);
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -129,7 +132,7 @@ export default function Home() {
     locationUrl: "",
     addressReference: "",
     scheduledDate: selectedDate,
-    timeSlot: SLOT_BANDS[0],
+    timeSlot: buildTimeSlot(WORKDAY_START, 1),
     notes: "",
   });
 
@@ -186,48 +189,61 @@ export default function Home() {
     { enabled: isModalOpen }
   );
 
-  const bandHasService = (band: string, rows: typeof appointments = appointments) => {
-    const bandRange = parseTimeSlot(band);
-    if (!bandRange) return false;
-    return rows.some(
-      (appointment) =>
-        appointment.status !== "cancelado" &&
-        timeSlotOverlapsRange(String(appointment.timeSlot || ""), bandRange.start, bandRange.end)
-    );
-  };
+  const dayAppointmentsSorted = useMemo(() => {
+    return [...appointments]
+      .filter((a) => a.status !== "cancelado")
+      .sort((a, b) => {
+        const aStart = parseTimeSlot(String(a.timeSlot || ""))?.start ?? 0;
+        const bStart = parseTimeSlot(String(b.timeSlot || ""))?.start ?? 0;
+        return aStart - bStart;
+      });
+  }, [appointments]);
 
-  /** Tarjetas: solo turnos que EMPIEZAN en la franja (evita duplicar 1 auto en varias columnas). */
-  const appointmentsStartingInBand = (band: string) => {
-    return appointments.filter(
-      (appointment) =>
-        appointment.status !== "cancelado" &&
-        appointmentStartsInBand(String(appointment.timeSlot || ""), band)
-    );
-  };
+  const dayFreeGaps = useMemo(() => {
+    const occupied = dayAppointmentsSorted
+      .map((a) => parseTimeSlot(String(a.timeSlot || "")))
+      .filter((r): r is { start: number; end: number } => r != null);
+    return computeFreeGaps(occupied);
+  }, [dayAppointmentsSorted]);
 
-  /** Continuaciones: turnos que solapan la franja pero empezaron antes. */
-  const appointmentsContinuingInBand = (band: string) => {
-    const bandRange = parseTimeSlot(band);
-    if (!bandRange) return [];
-    return appointments.filter((appointment) => {
-      if (appointment.status === "cancelado") return false;
-      const slot = String(appointment.timeSlot || "");
-      if (appointmentStartsInBand(slot, band)) return false;
-      return timeSlotOverlapsRange(slot, bandRange.start, bandRange.end);
-    });
-  };
+  type TimelineItem =
+    | { kind: "gap"; key: string; start: number; end: number; washes: number }
+    | { kind: "appointment"; key: string; appointment: (typeof appointments)[number] };
 
-  const findBandForTimeSlot = (timeSlot: string) => {
-    const match = SLOT_BANDS.find((band) => appointmentStartsInBand(timeSlot, band));
-    if (match) return match;
-    // Fallback: primera franja que solape (turnos legacy mal alineados)
-    const overlap = SLOT_BANDS.find((band) => {
-      const bandRange = parseTimeSlot(band);
-      if (!bandRange) return false;
-      return timeSlotOverlapsRange(timeSlot, bandRange.start, bandRange.end);
-    });
-    return overlap || SLOT_BANDS[0];
-  };
+  const dayTimeline = useMemo((): TimelineItem[] => {
+    const items: TimelineItem[] = [];
+    let ai = 0;
+    let gi = 0;
+    const gaps = dayFreeGaps;
+
+    while (ai < dayAppointmentsSorted.length || gi < gaps.length) {
+      const app = dayAppointmentsSorted[ai];
+      const appStart = app
+        ? parseTimeSlot(String(app.timeSlot || ""))?.start ?? Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY;
+      const gap = gaps[gi];
+      const gapStart = gap ? gap.start : Number.POSITIVE_INFINITY;
+
+      if (gap && gapStart <= appStart) {
+        gi++;
+        if (gap.end - gap.start >= 5) {
+          items.push({
+            kind: "gap",
+            key: `gap-${gap.start}-${gap.end}`,
+            start: gap.start,
+            end: gap.end,
+            washes: washesThatFitInGap(gap, 1),
+          });
+        }
+      } else if (app) {
+        ai++;
+        items.push({ kind: "appointment", key: `app-${app.id}`, appointment: app });
+      } else {
+        break;
+      }
+    }
+    return items;
+  }, [dayAppointmentsSorted, dayFreeGaps]);
 
   const autosAgendadosDia = useMemo(() => {
     return appointments
@@ -240,13 +256,15 @@ export default function Home() {
   }, [appointments]);
 
   React.useEffect(() => {
-    if (appointments.length === 0) return;
-    const stillRelevant = bandHasService(selectedSlot);
-    if (!stillRelevant) {
-      const firstBusy = SLOT_BANDS.find((band) => bandHasService(band));
-      if (firstBusy) setSelectedSlot(firstBusy);
+    if (dayAppointmentsSorted.length === 0) {
+      setSelectedAppointmentId(null);
+      return;
     }
-  }, [appointments, selectedSlot]);
+    const stillThere = dayAppointmentsSorted.some((a) => a.id === selectedAppointmentId);
+    if (!stillThere) {
+      setSelectedAppointmentId(dayAppointmentsSorted[0].id);
+    }
+  }, [dayAppointmentsSorted, selectedAppointmentId]);
 
   const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen;
   React.useEffect(() => {
@@ -259,33 +277,42 @@ export default function Home() {
     };
   }, [anyModalOpen]);
 
-  const selectedSlotAppointments = useMemo(
-    () => appointmentsStartingInBand(selectedSlot),
-    [appointments, selectedSlot]
-  );
-  const selectedSlotContinuations = useMemo(
-    () => appointmentsContinuingInBand(selectedSlot),
-    [appointments, selectedSlot]
-  );
-  const selectedSlotAppointment = selectedSlotAppointments[0] ?? null;
+  const selectedDayAppointment =
+    dayAppointmentsSorted.find((a) => a.id === selectedAppointmentId) ??
+    dayAppointmentsSorted[0] ??
+    null;
 
   const formVehicleCount = Math.max(1, formVehicles.length);
   const formStartTime = getSlotStart(formData.timeSlot);
   const formComputedSlot = buildTimeSlot(formStartTime, formVehicleCount);
   const formDurationLabel = formatDuration(durationForVehicles(formVehicleCount));
 
-  const isStartTimeBlocked = (start: string) => {
-    if (!fitsInWorkday(start, formVehicleCount)) return true;
-    const candidate = buildTimeSlot(start, formVehicleCount);
-    return formDayAppointments.some((row) => {
-      if (editingAppointmentId && row.id === editingAppointmentId) return false;
-      if (row.status === "cancelado") return false;
-      const candidateRange = parseTimeSlot(candidate);
-      const rowRange = parseTimeSlot(String(row.timeSlot || ""));
-      if (!candidateRange || !rowRange) return false;
-      return candidateRange.start < rowRange.end && rowRange.start < candidateRange.end;
-    });
-  };
+  const formOccupiedSlots = useMemo(() => {
+    return formDayAppointments
+      .filter((row) => {
+        if (editingAppointmentId && row.id === editingAppointmentId) return false;
+        if (row.status === "cancelado") return false;
+        return true;
+      })
+      .map((row) => String(row.timeSlot || ""));
+  }, [formDayAppointments, editingAppointmentId]);
+
+  const formAvailableStarts = useMemo(
+    () => availableStartTimes(formVehicleCount, formOccupiedSlots),
+    [formVehicleCount, formOccupiedSlots]
+  );
+
+  const isStartTimeBlocked = (start: string) => !formAvailableStarts.includes(start);
+
+  React.useEffect(() => {
+    if (!isModalOpen) return;
+    if (formAvailableStarts.length === 0) return;
+    if (formAvailableStarts.includes(formStartTime)) return;
+    setFormData((prev) => ({
+      ...prev,
+      timeSlot: buildTimeSlot(formAvailableStarts[0], Math.max(1, formVehicles.length)),
+    }));
+  }, [isModalOpen, formAvailableStarts, formStartTime, formVehicles.length]);
 
   // Mutaciones
   const createMutation = trpc.appointments.create.useMutation({
@@ -302,8 +329,8 @@ export default function Home() {
         setSelectedDate(created.scheduledDate);
         setActiveTab("calendario");
       }
-      if (created?.timeSlot) {
-        setSelectedSlot(findBandForTimeSlot(created.timeSlot));
+      if (created?.id) {
+        setSelectedAppointmentId(created.id);
       }
       utils.appointments.invalidate();
       setIsModalOpen(false);
@@ -381,8 +408,8 @@ export default function Home() {
         setSelectedDate(updated.scheduledDate);
         setActiveTab("calendario");
       }
-      if (updated?.timeSlot) {
-        setSelectedSlot(updated.timeSlot);
+      if (updated?.id) {
+        setSelectedAppointmentId(updated.id);
       }
       setSelectedAppointment(updated);
       utils.appointments.invalidate();
@@ -417,7 +444,7 @@ export default function Home() {
       locationUrl: "",
       addressReference: "",
       scheduledDate: selectedDate,
-      timeSlot: SLOT_BANDS[0],
+      timeSlot: buildTimeSlot(WORKDAY_START, 1),
       notes: "",
     });
     setFormVehicles([{ id: "v1", type: "auto", model: "", plate: "" }]);
@@ -432,10 +459,16 @@ export default function Home() {
     setClientTypeFilter("todos");
   };
 
-  const handleOpenCreateModal = (presetDate?: string, presetSlot?: string) => {
+  const resolvePresetStart = (preset?: string) => {
+    if (!preset) return WORKDAY_START;
+    if (preset.includes("-")) return getSlotStart(preset);
+    return preset.trim() || WORKDAY_START;
+  };
+
+  const handleOpenCreateModal = (presetDate?: string, presetStart?: string) => {
     setEditingAppointmentId(null);
     resetForm();
-    const start = presetSlot ? getSlotStart(presetSlot) : getSlotStart(SLOT_BANDS[0]);
+    const start = resolvePresetStart(presetStart);
     setFormData((prev) => ({
       ...prev,
       scheduledDate: presetDate || selectedDate,
@@ -488,7 +521,7 @@ export default function Home() {
       locationUrl: app.locationUrl || "",
       addressReference: app.addressReference || "",
       scheduledDate: app.scheduledDate || selectedDate,
-      timeSlot: app.timeSlot || SLOT_BANDS[0],
+      timeSlot: app.timeSlot || buildTimeSlot(WORKDAY_START, 1),
       notes: app.notes || "",
     });
     setFormVehicles(vehicles);
@@ -542,7 +575,7 @@ export default function Home() {
 
     if (!fitsInWorkday(formStartTime, validVehicles.length)) {
       toast.error(
-        `Con ${validVehicles.length} vehículo(s) necesitás ${formatDuration(durationForVehicles(validVehicles.length))}. Elegí un inicio más temprano (jornada hasta 18:00).`
+        `Con ${validVehicles.length} vehículo(s) necesitás ${formatDuration(durationForVehicles(validVehicles.length))}. Elegí un inicio más temprano (jornada ${WORKDAY_START}–${WORKDAY_END}).`
       );
       return;
     }
@@ -1076,338 +1109,187 @@ export default function Home() {
 
       {/* Contenido Principal */}
       <main className="px-3.5 sm:px-6 max-w-7xl mx-auto w-full pb-6 flex-1">
-        {/* VISTA 1: CALENDARIO POR FRANJAS */}
+        {/* VISTA 1: TIMELINE CONTINUO (por horario real) */}
         {activeTab === "calendario" && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-400 px-0.5">
-              <span className="hidden sm:inline">Franjas de 1h 20min · se bloquean según vehículos</span>
-              <span className="sm:hidden font-semibold text-slate-300">{autosAgendadosDia} auto(s) · {serviciosActivosDia} servicio(s)</span>
-              <span className="hidden sm:inline font-semibold text-slate-200">{autosAgendadosDia} auto(s) por lavar · {serviciosActivosDia} servicio(s)</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-0.5">
+              <span>
+                Jornada {WORKDAY_START}–{WORKDAY_END} · 1 auto = {formatDuration(MINUTES_PER_VEHICLE)} · inicios cada 5 min
+              </span>
+              <span className="font-semibold text-slate-200">
+                {autosAgendadosDia} auto(s) por lavar · {serviciosActivosDia} servicio(s)
+              </span>
             </div>
 
-            {/* Vista móvil: chips horizontales + una sola orden activa */}
-            <div className="md:hidden space-y-3">
-              <div className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory no-scrollbar -mx-3.5 px-3.5 pb-0.5">
-                {SLOT_BANDS.map((slot) => {
-                  const isSelected = selectedSlot === slot;
-                  const starters = appointmentsStartingInBand(slot);
-                  const continuations = appointmentsContinuingInBand(slot);
-                  const hasService = starters.length > 0 || continuations.length > 0;
-                  const bandCars = starters.reduce((sum, a) => sum + appointmentVehicleCount(a), 0);
-                  const chipLabel = starters.length > 0
-                    ? `${bandCars} auto(s)`
-                    : continuations.length > 0
-                      ? "En curso"
-                      : "Libre";
-                  return (
-                    <button
-                      key={slot}
-                      type="button"
-                      onClick={() => setSelectedSlot(slot)}
-                      className={`snap-start shrink-0 min-w-[4.75rem] rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                        isSelected
-                          ? "bg-red-600 border-red-500 text-white shadow-md shadow-red-600/30"
-                          : hasService
-                            ? "bg-slate-800 border-slate-600 text-slate-100"
-                            : "bg-slate-900/70 border-slate-800 text-slate-400"
-                      }`}
-                    >
-                      <span className="block text-[12px] font-extrabold leading-tight">{slot.split(" - ")[0]}</span>
-                      <span className={`block text-[9px] mt-0.5 font-semibold ${isSelected ? "text-red-100" : hasService ? "text-emerald-400" : "text-slate-500"}`}>
-                        {chipLabel}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="rounded-2xl border border-slate-700 bg-slate-900/95 overflow-hidden shadow-lg">
-                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800 bg-slate-950/50">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Clock className="w-4 h-4 text-red-400 shrink-0" />
-                    <span className="text-xs font-extrabold text-white">{selectedSlot}</span>
-                  </div>
+            <div className="space-y-2.5">
+              {dayTimeline.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 px-4 py-8 text-center">
+                  <Clock className="w-7 h-7 text-slate-600 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-slate-300">Día libre</p>
+                  <p className="text-xs text-slate-500 mt-1 mb-3">
+                    Podés agendar desde las {WORKDAY_START} (cada lavado ocupa 1h 20min).
+                  </p>
                   <button
                     type="button"
-                    onClick={() => handleOpenCreateModal(selectedDate, selectedSlot)}
-                    className="inline-flex items-center gap-1 bg-red-600 active:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors"
+                    onClick={() => handleOpenCreateModal(selectedDate, WORKDAY_START)}
+                    className="inline-flex items-center gap-1.5 bg-red-600 active:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl"
                   >
                     <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                    Agendar
+                    Agendar primer turno
                   </button>
                 </div>
+              )}
 
-                {selectedSlotAppointment ? (
-                  <div className="p-3.5 space-y-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedAppointment(selectedSlotAppointment);
-                        setIsDetailOpen(true);
-                      }}
-                      className="w-full text-left"
+              {dayTimeline.map((item) => {
+                if (item.kind === "gap") {
+                  const startLabel = minutesToTime(item.start);
+                  const endLabel = minutesToTime(item.end);
+                  const canBook = item.washes > 0;
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-2xl border border-dashed border-emerald-500/30 bg-emerald-500/5 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <span className="text-[10px] font-mono text-slate-400 block">{selectedSlotAppointment.code}</span>
-                          <h3 className="text-base font-extrabold text-white truncate">{selectedSlotAppointment.clientName}</h3>
-                          <div className="text-xs text-slate-300 flex items-center gap-1.5 mt-1">
-                            {selectedSlotAppointment.vehicleType === "auto" ? <Car className="w-4 h-4 text-blue-400" /> : <Truck className="w-4 h-4 text-purple-400" />}
-                            <span className="font-bold truncate">{selectedSlotAppointment.vehicleModel}</span>
-                            {selectedSlotAppointment.licensePlate && <span className="font-mono text-[10px] bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 shrink-0">{selectedSlotAppointment.licensePlate}</span>}
-                          </div>
-                          <p className="text-[10px] text-slate-400 mt-1">
-                            {selectedSlotAppointment.timeSlot}
-                            {" · "}
-                            {appointmentVehicleCount(selectedSlotAppointment)} vehículo(s)
-                          </p>
-                        </div>
-                        <div className="shrink-0">{getStatusBadge(selectedSlotAppointment.status)}</div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-emerald-300">
+                          Libre · {startLabel} – {endLabel}
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {canBook
+                            ? `Caben hasta ${item.washes} lavado(s) de 1 auto · podés empezar a las ${startLabel}, ${minutesToTime(item.start + 5)}, ${minutesToTime(item.start + 15)}…`
+                            : "Hueco corto: no entra un lavado completo de 1h 20min"}
+                        </p>
                       </div>
-                    </button>
-
-                    <div className="flex items-center gap-1.5 text-xs text-slate-400 rounded-xl bg-slate-950/70 border border-slate-800 p-2">
-                      <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                      <span className="truncate"><strong className="text-slate-300">{selectedSlotAppointment.cityZone}</strong> · {selectedSlotAppointment.address}</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      {selectedSlotAppointment.locationUrl ? (
-                        <a
-                          href={selectedSlotAppointment.locationUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold"
-                        >
-                          <Navigation className="w-4 h-4" /> GPS
-                        </a>
-                      ) : (
+                      {canBook && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setSelectedAppointment(selectedSlotAppointment);
-                            setIsDetailOpen(true);
-                          }}
-                          className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold"
+                          onClick={() => handleOpenCreateModal(selectedDate, startLabel)}
+                          className="inline-flex items-center gap-1 bg-red-600 active:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl shrink-0"
                         >
-                          <Eye className="w-4 h-4" /> Detalle
+                          <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                          Agendar {startLabel}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditModal(selectedSlotAppointment)}
-                        className="h-11 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 border border-slate-600 text-white text-xs font-extrabold"
-                      >
-                        <Pencil className="w-4 h-4 text-red-400" /> Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleInitiateFinalize(selectedSlotAppointment)}
-                        className="h-11 col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 active:bg-red-700 text-white text-xs font-extrabold shadow-md shadow-red-600/30"
-                      >
-                        <CheckCircle2 className="w-4 h-4" /> {selectedSlotAppointment.status === "finalizado" ? "Cobro" : "Finalizar"}
-                      </button>
                     </div>
+                  );
+                }
 
-                    <div className="flex items-center justify-between pt-0.5">
-                      <span className="text-xs font-extrabold text-red-400 font-display">{selectedSlotAppointment.servicePrice.toLocaleString("es-PY")} Gs.</span>
-                      {getPaymentBadge(selectedSlotAppointment.paymentStatus, selectedSlotAppointment.paymentMethod)}
-                    </div>
-                  </div>
-                ) : selectedSlotContinuations.length > 0 ? (
-                  <div className="px-4 py-5 space-y-2">
-                    <p className="text-xs font-bold text-amber-300/90 text-center">Servicio en curso</p>
-                    {selectedSlotContinuations.map((app) => (
-                      <button
-                        key={app.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedAppointment(app);
-                          setIsDetailOpen(true);
-                        }}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-left"
-                      >
-                        <span className="block text-[10px] font-mono text-slate-500">{app.code}</span>
-                        <span className="block text-sm font-bold text-white truncate">{app.clientName}</span>
-                        <span className="block text-[11px] text-slate-400 mt-0.5">
-                          Continúa · {app.timeSlot}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="px-4 py-6 text-center">
-                    <Clock className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
-                    <p className="text-xs font-bold text-slate-400">Franja libre</p>
-                    <p className="text-[11px] text-slate-600 mt-0.5">Tocá “Agendar” para cargar un servicio.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Vista extendida para tablet y escritorio */}
-            <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {SLOT_BANDS.map((slot) => {
-                const slotAppointments = appointmentsStartingInBand(slot);
-                const continuations = appointmentsContinuingInBand(slot);
-                const hasAppointments = slotAppointments.length > 0;
-                const hasActivity = hasAppointments || continuations.length > 0;
-                const bandCars = slotAppointments.reduce(
-                  (sum, a) => sum + appointmentVehicleCount(a),
-                  0
-                );
+                const app = item.appointment;
+                const cars = appointmentVehicleCount(app);
+                const isSelected = selectedDayAppointment?.id === app.id;
 
                 return (
                   <div
-                    key={slot}
+                    key={item.key}
                     className={`rounded-2xl border p-3.5 sm:p-4 transition-all ${
-                      hasActivity
-                        ? "bg-slate-900/90 border-slate-700 shadow-lg"
-                        : "bg-slate-950/40 border-slate-800/80"
+                      isSelected
+                        ? "bg-slate-900 border-red-500/50 shadow-lg shadow-red-900/20"
+                        : "bg-slate-900/90 border-slate-700 shadow-md"
                     }`}
                   >
-                    <div className="flex items-center justify-between border-b border-slate-800/90 pb-2.5 mb-3">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
-                        <Clock className="w-3.5 h-3.5 text-red-400" />
-                        <span>{slot}</span>
-                        {hasAppointments && (
-                          <span className="text-[10px] font-semibold text-emerald-400">· {bandCars} auto(s)</span>
-                        )}
-                        {!hasAppointments && continuations.length > 0 && (
-                          <span className="text-[10px] font-semibold text-amber-400">· en curso</span>
-                        )}
-                      </div>
+                    <div className="flex items-start justify-between gap-2 border-b border-slate-800/90 pb-2.5 mb-3">
                       <button
-                        onClick={() => handleOpenCreateModal(selectedDate, slot)}
-                        className="text-[11px] font-bold text-red-400 hover:text-red-300 bg-red-600/10 hover:bg-red-600/20 px-2.5 py-1 rounded-lg flex items-center gap-1 active:scale-95 transition-all touch-manipulation cursor-pointer"
+                        type="button"
+                        className="text-left min-w-0"
+                        onClick={() => {
+                          setSelectedAppointmentId(app.id);
+                          setSelectedAppointment(app);
+                          setIsDetailOpen(true);
+                        }}
                       >
-                        <Plus className="w-3 h-3 stroke-[2.5]" />
-                        <span>Agendar</span>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
+                          <Clock className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                          <span className="font-extrabold">{app.timeSlot}</span>
+                          <span className="text-[10px] font-semibold text-emerald-400">
+                            · {cars} auto(s)
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-500 block mt-0.5">{app.code}</span>
+                        <h3 className="text-sm sm:text-base font-extrabold text-white truncate mt-0.5">
+                          {app.clientName}
+                        </h3>
+                      </button>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {getStatusBadge(app.status)}
+                        {getPaymentBadge(app.paymentStatus, app.paymentMethod)}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 mb-2.5">
+                      {parseVehicles(app).map((veh: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between text-xs text-slate-200 bg-slate-950/40 px-2 py-1 rounded-lg border border-slate-800/80"
+                        >
+                          <div className="flex items-center gap-1.5 truncate">
+                            {veh.type === "auto" ? (
+                              <Car className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                            ) : (
+                              <Truck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                            )}
+                            <span className="font-bold text-white truncate">{veh.model}</span>
+                            {veh.plate && (
+                              <span className="text-[9px] font-mono font-bold bg-slate-900 px-1 rounded text-slate-300 border border-slate-700 shrink-0">
+                                {veh.plate}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-medium shrink-0 ml-1.5">
+                            {veh.type === "auto" ? "Auto" : "Camioneta"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 flex items-start gap-1.5 mb-3 bg-slate-950/60 p-2 rounded-xl border border-slate-800">
+                      <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                      <span className="truncate leading-tight">
+                        <strong className="text-slate-300">{app.cityZone}:</strong> {app.address}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 mb-2.5">
+                      {app.locationUrl ? (
+                        <a
+                          href={app.locationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 py-2 px-2.5 rounded-xl active:scale-95 touch-manipulation"
+                        >
+                          <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Abrir GPS</span>
+                        </a>
+                      ) : (
+                        <div className="flex-1 text-[11px] text-slate-500 text-center py-2 bg-slate-950/40 rounded-xl">
+                          Sin GPS
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditModal(app)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-slate-800 border border-slate-600 py-2 px-2.5 rounded-xl active:scale-95 touch-manipulation"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-red-400" />
+                        <span>Editar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleInitiateFinalize(app)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-slate-700 hover:bg-red-600 active:bg-red-700 py-2 px-2.5 rounded-xl border border-slate-600 active:scale-95 touch-manipulation"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>{app.status === "finalizado" ? "Cobro" : "Finalizar"}</span>
                       </button>
                     </div>
 
-                    {hasAppointments ? (
-                      <div className="space-y-3">
-                        {slotAppointments.map((app) => (
-                          <div
-                            key={app.id}
-                            className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 hover:border-red-500/80 transition-all shadow-md active:bg-slate-800"
-                            onClick={() => {
-                              setSelectedAppointment(app);
-                              setIsDetailOpen(true);
-                            }}
-                          >
-                            <div className="flex items-start justify-between gap-2 mb-1.5">
-                              <div className="min-w-0">
-                                <span className="text-[10px] font-mono text-slate-400 block">{app.code}</span>
-                                <h3 className="text-sm font-bold text-white truncate">{app.clientName}</h3>
-                              </div>
-                              <div className="flex flex-col items-end gap-1 shrink-0">
-                                {getStatusBadge(app.status)}
-                                {getPaymentBadge(app.paymentStatus, app.paymentMethod)}
-                              </div>
-                            </div>
-
-                            {/* Lista de vehículos del turno */}
-                            <div className="space-y-1 mb-2.5">
-                              {parseVehicles(app).map((veh: any, idx: number) => (
-                                <div key={idx} className="flex items-center justify-between text-xs text-slate-200 bg-slate-950/40 px-2 py-1 rounded-lg border border-slate-800/80">
-                                  <div className="flex items-center gap-1.5 truncate">
-                                    {veh.type === "auto" ? (
-                                      <Car className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                                    ) : (
-                                      <Truck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                                    )}
-                                    <span className="font-bold text-white truncate">{veh.model}</span>
-                                    {veh.plate && (
-                                      <span className="text-[9px] font-mono font-bold bg-slate-900 px-1 py-0.2 rounded text-slate-300 border border-slate-700 shrink-0">
-                                        {veh.plate}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span className="text-[10px] text-slate-400 font-medium shrink-0 ml-1.5">
-                                    {veh.type === "auto" ? "Auto" : "Camioneta"}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="text-[11px] text-slate-400 flex items-start gap-1.5 mb-3 bg-slate-950/60 p-2 rounded-xl border border-slate-800">
-                              <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
-                              <span className="truncate leading-tight">
-                                <strong className="text-slate-300">{app.cityZone}:</strong> {app.address}
-                              </span>
-                            </div>
-
-                            {/* Acciones Táctiles Mobile */}
-                            <div className="flex items-center gap-2 mb-2.5">
-                              {app.locationUrl ? (
-                                <a
-                                  href={app.locationUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 py-2 px-2.5 rounded-xl transition-all active:scale-95 touch-manipulation"
-                                >
-                                  <Navigation className="w-3.5 h-3.5 text-emerald-400" />
-                                  <span>Abrir GPS</span>
-                                </a>
-                              ) : (
-                                <div className="flex-1 text-[11px] text-slate-500 text-center py-2 bg-slate-950/40 rounded-xl">
-                                  Sin GPS
-                                </div>
-                              )}
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleInitiateFinalize(app);
-                                }}
-                                className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-slate-700 hover:bg-red-600 active:bg-red-700 py-2 px-2.5 rounded-xl border border-slate-600 transition-all active:scale-95 touch-manipulation cursor-pointer"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                <span>{app.status === "finalizado" ? "Cobro" : "Finalizar"}</span>
-                              </button>
-                            </div>
-
-                            <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between text-xs">
-                              <span className="font-extrabold text-red-400 font-display text-sm">
-                                {app.servicePrice.toLocaleString("es-PY")} Gs.
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-medium">
-                                {app.clientType === "particular"
-                                  ? "Particular"
-                                  : app.companyName || "Empresa"}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : continuations.length > 0 ? (
-                      <div className="space-y-2">
-                        {continuations.map((app) => (
-                          <button
-                            key={app.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedAppointment(app);
-                              setIsDetailOpen(true);
-                            }}
-                            className="w-full text-left rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2.5 hover:border-amber-500/50"
-                          >
-                            <span className="text-[10px] font-mono text-slate-500 block">{app.code}</span>
-                            <span className="text-sm font-bold text-white truncate block">{app.clientName}</span>
-                            <span className="text-[11px] text-amber-300/90 mt-0.5 block">
-                              Continúa · {app.timeSlot}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="py-6 text-center text-xs text-slate-600">
-                        Franja libre disponible
-                      </div>
-                    )}
+                    <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between text-xs">
+                      <span className="font-extrabold text-red-400 font-display text-sm">
+                        {app.servicePrice.toLocaleString("es-PY")} Gs.
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        {app.clientType === "particular" ? "Particular" : app.companyName || "Empresa"}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
@@ -1625,7 +1507,7 @@ export default function Home() {
                 Reserva a Domicilio 555 Detail Studio
               </h2>
               <p className="text-xs text-slate-300 leading-relaxed mb-4">
-                Tus clientes eligen fecha, franja y pegan directamente su link de Google Maps o Waze. El pedido impacta al instante en esta agenda operativa.
+                Tus clientes eligen fecha, hora de inicio y pegan directamente su link de Google Maps o Waze. El pedido impacta al instante en esta agenda operativa.
               </p>
 
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
@@ -2248,7 +2130,7 @@ export default function Home() {
                     Hora de inicio *
                   </label>
                   <select
-                    value={formStartTime}
+                    value={formAvailableStarts.includes(formStartTime) ? formStartTime : formAvailableStarts[0] || formStartTime}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
@@ -2269,8 +2151,10 @@ export default function Home() {
                     })}
                   </select>
                   <p className="mt-1 text-[10px] text-slate-400">
-                    Franja asignada: <strong className="text-slate-200">{formComputedSlot}</strong>
-                    {" · "}1 vehículo = {formatDuration(MINUTES_PER_VEHICLE)}
+                    Horario del lavado: <strong className="text-slate-200">{formComputedSlot}</strong>
+                    {" · "}duración {formDurationLabel} ({formVehicleCount} vehículo
+                    {formVehicleCount > 1 ? "s" : ""})
+                    {" · "}jornada {WORKDAY_START}–{WORKDAY_END}
                   </p>
                 </div>
               </div>

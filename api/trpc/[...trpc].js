@@ -25,12 +25,13 @@ var decodeOAuthState = (state) => {
 
 // shared/scheduling.ts
 var MINUTES_PER_VEHICLE = 80;
-var WORKDAY_START = "08:00";
+var START_INTERVAL_MINUTES = 5;
+var WORKDAY_START = "07:30";
 var WORKDAY_END = "18:00";
 var START_TIMES = (() => {
   const starts = [];
   const dayEnd = timeToMinutes(WORKDAY_END);
-  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += 20) {
+  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += START_INTERVAL_MINUTES) {
     starts.push(minutesToTime(m));
   }
   return starts;
@@ -882,7 +883,7 @@ async function assertScheduleAvailable(params) {
   if (!fitsInWorkday(start, params.vehicleCount)) {
     throw new TRPCError3({
       code: "BAD_REQUEST",
-      message: `El lavado de ${params.vehicleCount} veh\xEDculo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 08:00\u201318:00 partiendo de ${start}.`
+      message: `El lavado de ${params.vehicleCount} veh\xEDculo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 07:30\u201318:00 partiendo de ${start}.`
     });
   }
   const overlaps = await findOverlappingAppointments({
