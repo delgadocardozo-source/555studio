@@ -88,10 +88,14 @@ async function assertScheduleAvailable(params: {
   });
 
   if (overlaps.length > 0) {
-    const conflict = overlaps[0];
+    const names = overlaps
+      .slice(0, 3)
+      .map((c) => `${c.clientName} (${c.timeSlot})`)
+      .join("; ");
+    const extra = overlaps.length > 3 ? ` y ${overlaps.length - 3} más` : "";
     throw new TRPCError({
       code: "CONFLICT",
-      message: `Horario ocupado: se solapa con ${conflict.clientName} (${conflict.timeSlot}). Cada vehículo requiere 1h 20min.`,
+      message: `Horario ocupado: se solapa con ${names}${extra}. Cada vehículo requiere 1h 20min — elegí otro inicio o mové el turno que choca.`,
     });
   }
 
@@ -325,12 +329,28 @@ export const appRouter = router({
             ? Number(payload.vehicleCount)
             : Number(existing.vehicleCount) || 1;
         const nextSlotInput = payload.timeSlot || existing.timeSlot;
-        payload.timeSlot = await assertScheduleAvailable({
-          scheduledDate: nextDate,
-          timeSlot: nextSlotInput,
-          vehicleCount: nextVehicleCount,
-          excludeId: input.id,
-        });
+
+        const existingNormalized = buildTimeSlot(
+          getSlotStart(String(existing.timeSlot || "")),
+          Number(existing.vehicleCount) > 0 ? Number(existing.vehicleCount) : 1
+        );
+        const nextNormalized = buildTimeSlot(getSlotStart(String(nextSlotInput)), nextVehicleCount);
+        const scheduleChanged =
+          String(nextDate) !== String(existing.scheduledDate) ||
+          nextNormalized !== existingNormalized;
+
+        // Si no cambia fecha/inicio/cantidad de vehículos, no revalidar solapes:
+        // turnos viejos pueden solaparse tras corregir N×80 y igual hay que poder guardar datos.
+        if (scheduleChanged) {
+          payload.timeSlot = await assertScheduleAvailable({
+            scheduledDate: nextDate,
+            timeSlot: nextSlotInput,
+            vehicleCount: nextVehicleCount,
+            excludeId: input.id,
+          });
+        } else {
+          payload.timeSlot = existingNormalized;
+        }
 
         if (input.data.clientPhone && input.data.clientName) {
           await db.upsertCustomerProfile({
