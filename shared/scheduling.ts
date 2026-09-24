@@ -306,3 +306,232 @@ export function withNormalizedTimeSlot<T extends { timeSlot?: string | null; veh
 export function isPendingWashStatus(status: string | null | undefined): boolean {
   return status !== "finalizado" && status !== "cancelado";
 }
+
+/** Turno mínimo para algoritmos de empaque / empuje. */
+export type ScheduleItem = {
+  id: number;
+  timeSlot: string;
+  vehicleCount: number;
+  clientName?: string;
+  status?: string | null;
+};
+
+export type ScheduleShift = {
+  id: number;
+  clientName: string;
+  fromSlot: string;
+  toSlot: string;
+  start: string;
+};
+
+export type MovePlan = {
+  start: string;
+  slot: string;
+  /** Turnos que hay que correr hacia adelante para liberar el hueco. */
+  pushes: ScheduleShift[];
+  /** True si el inicio cabe sin tocar a nadie. */
+  direct: boolean;
+};
+
+function activeScheduleItems(items: ScheduleItem[]): ScheduleItem[] {
+  return items.filter((item) => item.status !== "cancelado");
+}
+
+/**
+ * Empaca turnos en orden cronológico: si dos se solapan, el que empieza después
+ * (o el de mayor id a igualdad) se corre al primer inicio libre.
+ * Conserva el orden relativo por hora de inicio original.
+ */
+export function packDaySchedule(items: ScheduleItem[]): ScheduleShift[] {
+  const active = activeScheduleItems(items)
+    .map((item) => {
+      const cars = Math.max(1, Math.floor(item.vehicleCount) || 1);
+      const slot = normalizeTimeSlot(item.timeSlot, cars);
+      const parsed = parseTimeSlot(slot);
+      return {
+        id: item.id,
+        clientName: item.clientName || `Turno #${item.id}`,
+        cars,
+        fromSlot: slot,
+        desiredStart: parsed?.start ?? timeToMinutes(WORKDAY_START),
+      };
+    })
+    .sort((a, b) => a.desiredStart - b.desiredStart || a.id - b.id);
+
+  const shifts: ScheduleShift[] = [];
+  let cursor = timeToMinutes(WORKDAY_START);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+
+  for (const item of active) {
+    let start = snapMinutesToStartGrid(Math.max(item.desiredStart, cursor));
+    if (start > lastStart) continue;
+
+    const toSlot = buildTimeSlot(minutesToTime(start), item.cars);
+    if (toSlot !== item.fromSlot) {
+      shifts.push({
+        id: item.id,
+        clientName: item.clientName,
+        fromSlot: item.fromSlot,
+        toSlot,
+        start: minutesToTime(start),
+      });
+    }
+    cursor = start + durationForVehicles(item.cars);
+  }
+
+  return shifts;
+}
+
+/** Pares que se solapan el mismo día (datos inconsistentes). */
+export function findOverlappingPairs(
+  items: ScheduleItem[]
+): Array<{ a: ScheduleItem; b: ScheduleItem }> {
+  const active = activeScheduleItems(items).map((item) => ({
+    ...item,
+    timeSlot: normalizeTimeSlot(item.timeSlot, item.vehicleCount),
+  }));
+  const pairs: Array<{ a: ScheduleItem; b: ScheduleItem }> = [];
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      if (timeSlotsOverlap(active[i].timeSlot, active[j].timeSlot)) {
+        pairs.push({ a: active[i], b: active[j] });
+      }
+    }
+  }
+  return pairs;
+}
+
+function snapMinutesToStartGrid(minutes: number): number {
+  const dayStart = timeToMinutes(WORKDAY_START);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+  let start = Math.max(minutes, dayStart);
+  const rem = (start - dayStart) % START_INTERVAL_MINUTES;
+  if (rem !== 0) start += START_INTERVAL_MINUTES - rem;
+  return Math.min(start, lastStart + START_INTERVAL_MINUTES); // puede quedar > lastStart → inválido
+}
+
+/**
+ * Planifica mover `movingId` a `desiredStart`, empujando hacia adelante los turnos
+ * que quedarían solapados (cadena). Null si algún inicio supera las 18:00.
+ */
+export function planMoveWithPush(
+  items: ScheduleItem[],
+  movingId: number,
+  desiredStart: string
+): MovePlan | null {
+  const active = activeScheduleItems(items);
+  const moving = active.find((item) => item.id === movingId);
+  if (!moving) return null;
+
+  const cars = Math.max(1, Math.floor(moving.vehicleCount) || 1);
+  if (!fitsInWorkday(desiredStart, cars)) return null;
+
+  const moveStart = timeToMinutes(desiredStart);
+  const moveEnd = moveStart + durationForVehicles(cars);
+  const moveSlot = buildTimeSlot(desiredStart, cars);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+
+  const others = active
+    .filter((item) => item.id !== movingId)
+    .map((item) => {
+      const otherCars = Math.max(1, Math.floor(item.vehicleCount) || 1);
+      const slot = normalizeTimeSlot(item.timeSlot, otherCars);
+      const parsed = parseTimeSlot(slot);
+      if (!parsed) return null;
+      return {
+        id: item.id,
+        clientName: item.clientName || `Turno #${item.id}`,
+        cars: otherCars,
+        fromSlot: slot,
+        start: parsed.start,
+        end: parsed.end,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row != null)
+    .sort((a, b) => a.start - b.start || a.id - b.id);
+
+  const pushes: ScheduleShift[] = [];
+  /** Fin del bloque ya colocado (moved + empujados en cadena). */
+  let fence = moveEnd;
+
+  for (const other of others) {
+    // Completamente antes del nuevo turno: no se toca.
+    if (other.end <= moveStart) continue;
+
+    // Cabe tal cual después del fence (sin solapar el moved ni los empujados).
+    if (other.start >= fence) {
+      fence = Math.max(fence, other.end);
+      continue;
+    }
+
+    // Solapa o queda atrapado → empujar al fence.
+    const newStart = snapMinutesToStartGrid(fence);
+    if (newStart > lastStart) return null;
+
+    const toSlot = buildTimeSlot(minutesToTime(newStart), other.cars);
+    if (toSlot !== other.fromSlot) {
+      pushes.push({
+        id: other.id,
+        clientName: other.clientName,
+        fromSlot: other.fromSlot,
+        toSlot,
+        start: minutesToTime(newStart),
+      });
+    }
+    fence = newStart + durationForVehicles(other.cars);
+  }
+
+  // Validación final: sin solapes.
+  const slotById = new Map<number, string>([[movingId, moveSlot]]);
+  for (const p of pushes) slotById.set(p.id, p.toSlot);
+  const proposed: ScheduleItem[] = active.map((item) => ({
+    id: item.id,
+    clientName: item.clientName,
+    status: item.status,
+    vehicleCount: Math.max(1, Math.floor(item.vehicleCount) || 1),
+    timeSlot:
+      slotById.get(item.id) ||
+      normalizeTimeSlot(item.timeSlot, Math.max(1, Math.floor(item.vehicleCount) || 1)),
+  }));
+  if (findOverlappingPairs(proposed).length > 0) return null;
+
+  return {
+    start: desiredStart,
+    slot: moveSlot,
+    pushes,
+    direct: pushes.length === 0,
+  };
+}
+
+/**
+ * Inicios donde se puede colocar el turno: directo o empujando a otros.
+ * Orden: sin empuje primero, luego por hora.
+ */
+export function availableStartsWithPush(items: ScheduleItem[], movingId: number): MovePlan[] {
+  const moving = activeScheduleItems(items).find((item) => item.id === movingId);
+  if (!moving) return [];
+
+  const cars = Math.max(1, Math.floor(moving.vehicleCount) || 1);
+  const plans: MovePlan[] = [];
+  const seen = new Set<string>();
+
+  for (const start of START_TIMES) {
+    if (!fitsInWorkday(start, cars)) continue;
+    const plan = planMoveWithPush(items, movingId, start);
+    if (!plan || seen.has(plan.start)) continue;
+    seen.add(plan.start);
+    plans.push(plan);
+  }
+
+  plans.sort((a, b) => {
+    if (a.direct !== b.direct) return a.direct ? -1 : 1;
+    return timeToMinutes(a.start) - timeToMinutes(b.start);
+  });
+
+  return plans;
+}
+
+/** ¿Hay solapes activos en el día? */
+export function dayHasOverlaps(items: ScheduleItem[]): boolean {
+  return findOverlappingPairs(items).length > 0;
+}

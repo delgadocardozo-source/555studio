@@ -2,7 +2,15 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { get as getBlob, put as putBlob } from "@vercel/blob";
 import { appointments, Appointment, InsertAppointment, customers, Customer, InsertCustomer, InsertUser, users } from "../drizzle/schema";
-import { timeSlotsOverlap, withNormalizedTimeSlot } from "../shared/scheduling";
+import {
+  appointmentVehicleCount,
+  dayHasOverlaps,
+  findOverlappingPairs,
+  packDaySchedule,
+  ScheduleItem,
+  timeSlotsOverlap,
+  withNormalizedTimeSlot,
+} from "../shared/scheduling";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -65,24 +73,150 @@ function normalizeAppointmentRow(row: StoredAppointment): StoredAppointment {
   return withNormalizedTimeSlot(row);
 }
 
+function toScheduleItem(row: StoredAppointment): ScheduleItem {
+  return {
+    id: Number(row.id),
+    timeSlot: String(row.timeSlot || ""),
+    vehicleCount: appointmentVehicleCount(row),
+    clientName: String(row.clientName || ""),
+    status: row.status ?? null,
+  };
+}
+
+/**
+ * Si tras normalizar N×80 hay solapes el mismo día, empuja los turnos posteriores
+ * para dejar la agenda consistente (sin huecos “libres” que mienten).
+ */
+function applyOverlapSanitization(rows: StoredAppointment[]): {
+  rows: StoredAppointment[];
+  changed: boolean;
+  shifts: number;
+} {
+  const byDate = new Map<string, StoredAppointment[]>();
+  for (const row of rows) {
+    if (row.status === "cancelado") continue;
+    const date = String(row.scheduledDate || "");
+    if (!date) continue;
+    const list = byDate.get(date) || [];
+    list.push(row);
+    byDate.set(date, list);
+  }
+
+  const slotUpdates = new Map<number, string>();
+  let shiftCount = 0;
+
+  for (const [, dayRows] of Array.from(byDate.entries())) {
+    const items = dayRows.map(toScheduleItem);
+    if (!dayHasOverlaps(items)) continue;
+    const shifts = packDaySchedule(items);
+    for (const shift of shifts) {
+      slotUpdates.set(shift.id, shift.toSlot);
+      shiftCount += 1;
+    }
+  }
+
+  if (slotUpdates.size === 0) {
+    return { rows, changed: false, shifts: 0 };
+  }
+
+  const next = rows.map((row) => {
+    const toSlot = slotUpdates.get(Number(row.id));
+    if (!toSlot || toSlot === row.timeSlot) return row;
+    return normalizeAppointmentRow({
+      ...row,
+      timeSlot: toSlot,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  return { rows: next, changed: true, shifts: shiftCount };
+}
+
 async function readBlobAppointmentsNormalized(): Promise<StoredAppointment[]> {
   const rows = await readBlobAppointments();
   const normalized = rows.map(normalizeAppointmentRow);
-  const needsHeal = normalized.some((row, i) => row.timeSlot !== rows[i]?.timeSlot);
+  const sanitized = applyOverlapSanitization(normalized);
+  const needsHeal =
+    sanitized.changed ||
+    normalized.some((row, i) => row.timeSlot !== rows[i]?.timeSlot);
+
   if (needsHeal) {
     void withAppointmentsLock(async () => {
       const fresh = await readBlobAppointments();
       const healed = fresh.map(normalizeAppointmentRow);
-      const changed = healed.some((row, i) => row.timeSlot !== fresh[i]?.timeSlot);
+      const packed = applyOverlapSanitization(healed);
+      const changed =
+        packed.changed ||
+        healed.some((row, i) => row.timeSlot !== fresh[i]?.timeSlot);
       if (changed) {
-        console.info("[appointments] Normalizando timeSlot a N×80 min (1h20 por vehículo)");
-        await writeBlobAppointments(healed);
+        console.info(
+          `[appointments] Saneando agenda: N×80${packed.shifts ? ` + ${packed.shifts} empuje(s) por solape` : ""}`
+        );
+        await writeBlobAppointments(packed.rows);
       }
     }).catch((err) => {
-      console.error("[appointments] No se pudo persistir timeSlots normalizados:", err?.message || err);
+      console.error("[appointments] No se pudo persistir saneamiento de agenda:", err?.message || err);
     });
   }
-  return normalized;
+
+  return sanitized.rows;
+}
+
+/** Aplica shifts de empaque/empuje sobre Blob o SQL. */
+export async function applyScheduleShifts(
+  shifts: Array<{ id: number; timeSlot: string }>
+): Promise<StoredAppointment[]> {
+  if (shifts.length === 0) return [];
+
+  if (isVercelBlobRuntime()) {
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      const updated: StoredAppointment[] = [];
+      const now = new Date().toISOString();
+      for (const shift of shifts) {
+        const index = rows.findIndex((row) => Number(row.id) === shift.id);
+        if (index < 0) continue;
+        rows[index] = normalizeAppointmentRow({
+          ...rows[index],
+          timeSlot: shift.timeSlot,
+          updatedAt: now,
+        });
+        updated.push(rows[index]);
+      }
+      await writeBlobAppointments(rows);
+      return updated;
+    });
+  }
+
+  const db = await getDb();
+  if (!db) throw new Error("Base de datos no disponible");
+  const updated: StoredAppointment[] = [];
+  for (const shift of shifts) {
+    await db
+      .update(appointments)
+      .set({ timeSlot: shift.timeSlot })
+      .where(eq(appointments.id, shift.id));
+    const row = await getAppointmentById(shift.id);
+    if (row) updated.push(row as StoredAppointment);
+  }
+  return updated;
+}
+
+/** Sanea solapes de un día concreto y persiste. */
+export async function sanitizeDaySchedule(date: string): Promise<{
+  shiftsApplied: number;
+  overlapsBefore: number;
+}> {
+  const rows = await listAppointments({ date });
+  const items = rows.map((row) => toScheduleItem(row as StoredAppointment));
+  const overlapsBefore = findOverlappingPairs(items).length;
+  const shifts = packDaySchedule(items);
+  if (shifts.length === 0) {
+    return { shiftsApplied: 0, overlapsBefore };
+  }
+
+  await applyScheduleShifts(shifts.map((s) => ({ id: s.id, timeSlot: s.toSlot })));
+  return { shiftsApplied: shifts.length, overlapsBefore };
 }
 
 async function putJsonBlob(pathname: string, rows: unknown[]) {
