@@ -171,6 +171,77 @@ export function CashLedgerPanel() {
     (dateTo ? 1 : 0) +
     (search ? 1 : 0);
 
+  const ingresos = useMemo(
+    () => movements.filter((m) => m.type === "ingreso"),
+    [movements]
+  );
+  const egresos = useMemo(
+    () => movements.filter((m) => m.type === "egreso"),
+    [movements]
+  );
+
+  const renderMovementCard = (row: CashMovement) => (
+    <div
+      key={row.id}
+      className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex gap-3 items-start"
+    >
+      <div
+        className={`mt-0.5 p-2 rounded-xl shrink-0 ${
+          row.type === "ingreso"
+            ? "bg-emerald-500/15 text-emerald-400"
+            : "bg-rose-500/15 text-rose-400"
+        }`}
+      >
+        {row.type === "ingreso" ? (
+          <ArrowDownCircle className="w-4 h-4" />
+        ) : (
+          <ArrowUpCircle className="w-4 h-4" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-white truncate">{row.person}</p>
+            <p className="text-[11px] text-slate-400">
+              {row.category} · {row.movementDate}
+            </p>
+          </div>
+          <span
+            className={`text-sm font-extrabold font-display shrink-0 ${
+              row.type === "ingreso" ? "text-emerald-400" : "text-rose-400"
+            }`}
+          >
+            {row.type === "ingreso" ? "+" : "-"}
+            {Number(row.amount).toLocaleString("es-PY")}
+          </span>
+        </div>
+        {row.description ? (
+          <p className="text-[11px] text-slate-500 leading-snug">{row.description}</p>
+        ) : null}
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => openEdit(row)}
+            className="text-[11px] text-slate-400 hover:text-white inline-flex items-center gap-1"
+          >
+            <Pencil className="w-3 h-3" /> Editar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm("¿Eliminar este movimiento?")) {
+                deleteMutation.mutate({ id: row.id });
+              }
+            }}
+            className="text-[11px] text-rose-400/80 hover:text-rose-300 inline-flex items-center gap-1"
+          >
+            <Trash2 className="w-3 h-3" /> Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const handleDownloadPdf = async () => {
     try {
       const { doc, fileName } = await buildCashLedgerFile(movements, filters);
@@ -461,68 +532,44 @@ export function CashLedgerPanel() {
           </button>
         </div>
       ) : (
-        <div className="space-y-2">
-          {movements.map((row) => (
-            <div
-              key={row.id}
-              className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex gap-3 items-start"
-            >
-              <div
-                className={`mt-0.5 p-2 rounded-xl shrink-0 ${
-                  row.type === "ingreso"
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : "bg-rose-500/15 text-rose-400"
-                }`}
-              >
-                {row.type === "ingreso" ? (
-                  <ArrowDownCircle className="w-4 h-4" />
-                ) : (
-                  <ArrowUpCircle className="w-4 h-4" />
-                )}
+        <div className="space-y-4">
+          {(typeFilter === "todos" || typeFilter === "ingreso") && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-2 px-0.5">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 flex items-center gap-1.5">
+                  <ArrowDownCircle className="w-3.5 h-3.5" />
+                  Ingresos
+                </p>
+                <span className="text-[10px] font-bold text-emerald-300/80">
+                  {ingresos.length} · {formatGs(stats?.totalIngresos || 0)}
+                </span>
               </div>
-              <div className="flex-1 min-w-0 space-y-0.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{row.person}</p>
-                    <p className="text-[11px] text-slate-400">
-                      {row.category} · {row.movementDate}
-                    </p>
-                  </div>
-                  <span
-                    className={`text-sm font-extrabold font-display shrink-0 ${
-                      row.type === "ingreso" ? "text-emerald-400" : "text-rose-400"
-                    }`}
-                  >
-                    {row.type === "ingreso" ? "+" : "−"}
-                    {Number(row.amount).toLocaleString("es-PY")}
-                  </span>
-                </div>
-                {row.description ? (
-                  <p className="text-[11px] text-slate-500 leading-snug">{row.description}</p>
-                ) : null}
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(row)}
-                    className="text-[11px] text-slate-400 hover:text-white inline-flex items-center gap-1"
-                  >
-                    <Pencil className="w-3 h-3" /> Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (confirm("¿Eliminar este movimiento?")) {
-                        deleteMutation.mutate({ id: row.id });
-                      }
-                    }}
-                    className="text-[11px] text-rose-400/80 hover:text-rose-300 inline-flex items-center gap-1"
-                  >
-                    <Trash2 className="w-3 h-3" /> Eliminar
-                  </button>
-                </div>
+              {ingresos.length === 0 ? (
+                <p className="text-[11px] text-slate-500 px-1 py-2">Sin ingresos en este filtro.</p>
+              ) : (
+                <div className="space-y-2">{ingresos.map(renderMovementCard)}</div>
+              )}
+            </section>
+          )}
+
+          {(typeFilter === "todos" || typeFilter === "egreso") && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-2 px-0.5">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-rose-400 flex items-center gap-1.5">
+                  <ArrowUpCircle className="w-3.5 h-3.5" />
+                  Egresos
+                </p>
+                <span className="text-[10px] font-bold text-rose-300/80">
+                  {egresos.length} · {formatGs(stats?.totalEgresos || 0)}
+                </span>
               </div>
-            </div>
-          ))}
+              {egresos.length === 0 ? (
+                <p className="text-[11px] text-slate-500 px-1 py-2">Sin egresos en este filtro.</p>
+              ) : (
+                <div className="space-y-2">{egresos.map(renderMovementCard)}</div>
+              )}
+            </section>
+          )}
         </div>
       )}
 

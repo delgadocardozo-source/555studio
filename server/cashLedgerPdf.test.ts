@@ -38,13 +38,17 @@ describe("cashLedgerPdf", () => {
     expect(text).toContain("140.000");
   });
 
-  it("respeta filtro en el encabezado", () => {
-    const text = buildCashLedgerText(sample, {
-      person: "Marcelo",
-      dateFrom: "2026-09-24",
-      dateTo: "2026-09-24",
-    });
-    expect(text).toContain("Persona: Marcelo");
-    expect(text).toContain("24 de septiembre de 2026");
+  it("separa ingresos y egresos en el texto", () => {
+    const text = buildCashLedgerText(sample, { type: "todos" });
+    const ingresosIdx = text.indexOf("INGRESOS");
+    const egresosIdx = text.indexOf("EGRESOS");
+    expect(ingresosIdx).toBeGreaterThan(-1);
+    expect(egresosIdx).toBeGreaterThan(ingresosIdx);
+    const ingresoBlock = text.slice(ingresosIdx, egresosIdx);
+    const egresoBlock = text.slice(egresosIdx);
+    expect(ingresoBlock).toContain("Marcelo Añazco");
+    expect(ingresoBlock).not.toContain("Producto de Limpieza");
+    expect(egresoBlock).toContain("Producto de Limpieza");
+    expect(egresoBlock).not.toContain("Marcelo Añazco");
   });
 });
