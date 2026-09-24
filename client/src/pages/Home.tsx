@@ -39,7 +39,7 @@ import {
   START_TIMES,
   MINUTES_PER_VEHICLE,
   WORKDAY_START,
-  WORKDAY_END,
+  WORKDAY_LAST_START,
   appointmentVehicleCount,
   availableStartTimes,
   buildTimeSlot,
@@ -752,7 +752,7 @@ export default function Home() {
 
     if (!fitsInWorkday(formStartTime, validVehicles.length)) {
       toast.error(
-        `Con ${validVehicles.length} vehículo(s) necesitás ${formatDuration(durationForVehicles(validVehicles.length))}. Elegí un inicio más temprano (jornada ${WORKDAY_START}–${WORKDAY_END}).`
+        `Con ${validVehicles.length} vehículo(s) necesitás ${formatDuration(durationForVehicles(validVehicles.length))}. El último inicio es a las ${WORKDAY_LAST_START} (puede terminar después).`
       );
       return;
     }
@@ -1357,7 +1357,8 @@ export default function Home() {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-0.5">
               <span>
-                Jornada {WORKDAY_START}–{WORKDAY_END} · tocá <strong className="text-amber-300">Mover</strong> para cambiar horario
+                Se agarran trabajos {WORKDAY_START}–{WORKDAY_LAST_START} · pueden terminar después · tocá{" "}
+                <strong className="text-amber-300">Mover</strong>
               </span>
               <div className="flex items-center gap-2 flex-wrap justify-end">
                 <span className="font-semibold text-slate-200">
@@ -1440,7 +1441,11 @@ export default function Home() {
               {dayTimeline.map((item) => {
                 if (item.kind === "gap") {
                   const startLabel = minutesToTime(item.start);
-                  const endLabel = minutesToTime(item.end);
+                  const lastStartMin = timeToMinutes(WORKDAY_LAST_START);
+                  const endLabel =
+                    item.end > lastStartMin
+                      ? `${WORKDAY_LAST_START} (últ. inicio)`
+                      : minutesToTime(item.end);
                   const canBook = item.washes > 0;
                   const dropStart = movingAppointment
                     ? earliestStartInGap(
@@ -2540,7 +2545,7 @@ export default function Home() {
                     Horario del lavado: <strong className="text-slate-200">{formComputedSlot}</strong>
                     {" · "}duración {formDurationLabel} ({formVehicleCount} vehículo
                     {formVehicleCount > 1 ? "s" : ""})
-                    {" · "}jornada {WORKDAY_START}–{WORKDAY_END}
+                    {" · "}últ. inicio {WORKDAY_LAST_START}
                   </p>
                 </div>
               </div>

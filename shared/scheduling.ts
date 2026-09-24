@@ -4,22 +4,25 @@ export const MINUTES_PER_VEHICLE = 80;
 /** Grilla de inicios permitidos (permite 15:15 / 15:20 / 15:30, etc.). */
 export const START_INTERVAL_MINUTES = 5;
 
-/** Inicio y fin de jornada operativa. */
+/**
+ * Jornada de toma de trabajos.
+ * - WORKDAY_START: primer inicio posible
+ * - WORKDAY_LAST_START / WORKDAY_END: último inicio posible (18:00)
+ *   El lavado PUEDE terminar después de las 18:00.
+ */
 export const WORKDAY_START = "07:30";
-export const WORKDAY_END = "18:00";
+export const WORKDAY_LAST_START = "18:00";
+/** @deprecated Preferí WORKDAY_LAST_START. Semántica: último inicio, no fin de lavado. */
+export const WORKDAY_END = WORKDAY_LAST_START;
 
 /**
- * Posibles horas de inicio (cada 5 min dentro de la jornada).
- * El fin se calcula según cantidad de vehículos (N × 80 min).
+ * Posibles horas de inicio (cada 5 min).
+ * Se aceptan trabajos hasta las 18:00 inclusive; el fin puede ser después.
  */
 export const START_TIMES: string[] = (() => {
   const starts: string[] = [];
-  const dayEnd = timeToMinutes(WORKDAY_END);
-  for (
-    let m = timeToMinutes(WORKDAY_START);
-    m + MINUTES_PER_VEHICLE <= dayEnd;
-    m += START_INTERVAL_MINUTES
-  ) {
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+  for (let m = timeToMinutes(WORKDAY_START); m <= lastStart; m += START_INTERVAL_MINUTES) {
     starts.push(minutesToTime(m));
   }
   return starts;
@@ -31,10 +34,10 @@ export const START_TIMES: string[] = (() => {
  */
 export const SLOT_BANDS: string[] = (() => {
   const bands: string[] = [];
-  const dayEnd = timeToMinutes(WORKDAY_END);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
   for (
     let m = timeToMinutes(WORKDAY_START);
-    m + MINUTES_PER_VEHICLE <= dayEnd;
+    m <= lastStart;
     m += MINUTES_PER_VEHICLE
   ) {
     bands.push(`${minutesToTime(m)} - ${minutesToTime(m + MINUTES_PER_VEHICLE)}`);
@@ -114,10 +117,13 @@ export function timeSlotsOverlap(a: string, b: string): boolean {
   return rangesOverlap(pa.start, pa.end, pb.start, pb.end);
 }
 
-export function fitsInWorkday(startTime: string, vehicleCount: number): boolean {
+/**
+ * ¿Se puede AGARRAR el trabajo a esta hora?
+ * Las 18:00 son el último inicio; el lavado puede terminar después.
+ */
+export function fitsInWorkday(startTime: string, _vehicleCount: number = 1): boolean {
   const start = timeToMinutes(startTime);
-  const end = start + durationForVehicles(vehicleCount);
-  return start >= timeToMinutes(WORKDAY_START) && end <= timeToMinutes(WORKDAY_END);
+  return start >= timeToMinutes(WORKDAY_START) && start <= timeToMinutes(WORKDAY_LAST_START);
 }
 
 export type OccupiedRange = { start: number; end: number };
@@ -140,16 +146,19 @@ export function mergeOccupiedRanges(ranges: OccupiedRange[]): OccupiedRange[] {
 }
 
 /**
- * Huecos libres en la jornada (por horario real, no por franja).
- * Ej: turno 13:30–15:00 → hueco libre desde 15:00 (permite agendar 15:15 / 15:20…).
+ * Huecos donde aún se puede AGARRAR un trabajo (hasta WORKDAY_LAST_START inclusive).
+ * El extremo derecho del día se extiende un tick para permitir inicio exactamente a las 18:00
+ * aunque el turno anterior termine a las 18:00.
  */
 export function computeFreeGaps(
   occupied: OccupiedRange[],
   dayStart: string = WORKDAY_START,
-  dayEnd: string = WORKDAY_END
+  dayEnd: string = WORKDAY_LAST_START
 ): OccupiedRange[] {
   const startM = timeToMinutes(dayStart);
-  const endM = timeToMinutes(dayEnd);
+  const lastStart = timeToMinutes(dayEnd);
+  // Extremo exclusivo: permite un hueco puntual en el último inicio
+  const endExclusive = lastStart + START_INTERVAL_MINUTES;
   const merged = mergeOccupiedRanges(
     occupied.filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
   );
@@ -157,33 +166,60 @@ export function computeFreeGaps(
   let cursor = startM;
   for (const block of merged) {
     const blockStart = Math.max(block.start, startM);
-    const blockEnd = Math.min(block.end, endM);
+    const blockEnd = Math.min(block.end, endExclusive);
     if (blockStart > cursor) gaps.push({ start: cursor, end: blockStart });
     cursor = Math.max(cursor, blockEnd);
   }
-  if (cursor < endM) gaps.push({ start: cursor, end: endM });
+  if (cursor < endExclusive) gaps.push({ start: cursor, end: endExclusive });
   return gaps;
 }
 
-/** Cuántos lavados de `vehicleCount` autos caben en un hueco (sin solaparse entre sí). */
+/** Cuántos lavados de `vehicleCount` autos caben empezando dentro del hueco (hasta último inicio). */
 export function washesThatFitInGap(gap: OccupiedRange, vehicleCount: number = 1): number {
   const duration = durationForVehicles(vehicleCount);
   if (duration <= 0) return 0;
-  return Math.floor((gap.end - gap.start) / duration);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+  let count = 0;
+  let cursor = gap.start;
+  while (cursor < gap.end && cursor <= lastStart) {
+    const end = cursor + duration;
+    const touchesClosing = gap.end > lastStart || gap.end >= lastStart;
+    const okMidDay = end <= gap.end;
+    const okLate = touchesClosing && cursor <= lastStart;
+    if (!okMidDay && !okLate) break;
+    // Si hay un siguiente bloque (gap.end < closing zone), debe terminar antes
+    if (gap.end <= lastStart && end > gap.end) break;
+    count += 1;
+    cursor = end;
+  }
+  return count;
 }
 
-/** Primer inicio de la grilla que hace entrar N vehículos en el hueco. */
+/**
+ * Primer inicio de la grilla válido en el hueco.
+ * Entre turnos: debe terminar antes del siguiente.
+ * Al final del día: puede empezar hasta las 18:00 y terminar después.
+ */
 export function earliestStartInGap(gap: OccupiedRange, vehicleCount: number = 1): string | null {
   const duration = durationForVehicles(vehicleCount);
-  if (duration <= 0 || gap.end - gap.start < duration) return null;
+  if (duration <= 0) return null;
 
   const dayStart = timeToMinutes(WORKDAY_START);
+  const lastStart = timeToMinutes(WORKDAY_LAST_START);
+
   let start = Math.max(gap.start, dayStart);
   const offset = start - dayStart;
   const rem = offset % START_INTERVAL_MINUTES;
   if (rem !== 0) start += START_INTERVAL_MINUTES - rem;
 
-  if (start + duration <= gap.end && start >= dayStart) {
+  if (start > lastStart || start >= gap.end) return null;
+
+  const finishesBeforeNext = start + duration <= gap.end;
+  // Hueco que llega al cierre de toma (o lo pasa por el tick extra)
+  const reachesClosing = gap.end > lastStart;
+  const canStartLate = reachesClosing && start <= lastStart;
+
+  if (finishesBeforeNext || canStartLate) {
     return minutesToTime(start);
   }
   return null;
@@ -195,7 +231,7 @@ export function gapFitsVehicles(gap: OccupiedRange, vehicleCount: number): boole
 
 /**
  * Inicios disponibles para N vehículos dados los turnos ya ocupados.
- * Usa solape real: si el anterior termina a las 15:00, 15:00 / 15:05 / 15:15 quedan libres.
+ * Usa solape real; permite empezar a las 18:00 aunque el lavado termine después.
  */
 export function availableStartTimes(
   vehicleCount: number,
@@ -223,7 +259,7 @@ export function snapStartToGrid(startTime: string): string {
   const snapped =
     dayStart +
     Math.floor(Math.max(0, minutes - dayStart) / START_INTERVAL_MINUTES) * START_INTERVAL_MINUTES;
-  return minutesToTime(snapped);
+  return minutesToTime(Math.min(snapped, timeToMinutes(WORKDAY_LAST_START)));
 }
 
 export function appointmentVehicleCount(row: {
