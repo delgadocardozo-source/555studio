@@ -183,4 +183,19 @@ describe("Appointments tRPC router with Payment Rules", () => {
     // Cleanup
     await caller.appointments.delete({ id: created.id });
   });
+
+  it("getReceiptUrl returns non-private URLs unchanged", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const manus = await caller.appointments.getReceiptUrl({
+      url: "/manus-storage/receipt_test.png",
+    });
+    expect(manus.url).toBe("/manus-storage/receipt_test.png");
+
+    const publicish = await caller.appointments.getReceiptUrl({
+      url: "https://example.public.blob.vercel-storage.com/555-detail-agenda/receipts/x.jpg",
+    });
+    expect(publicish.url).toContain("public.blob.vercel-storage.com");
+  });
 });

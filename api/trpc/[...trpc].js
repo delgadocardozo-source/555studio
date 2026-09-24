@@ -100,7 +100,7 @@ function fitsInWorkday(startTime, _vehicleCount = 1) {
 
 // server/routers.ts
 import { z as z2 } from "zod";
-import { put as putBlob2 } from "@vercel/blob";
+import { issueSignedToken, put as putBlob2, presignUrl } from "@vercel/blob";
 import { TRPCError as TRPCError3 } from "@trpc/server";
 
 // server/_core/cookies.ts
@@ -300,9 +300,9 @@ function appendHashSuffix(relKey) {
 async function storagePut(relKey, data, contentType = "application/octet-stream") {
   const { forgeUrl, forgeKey } = getForgeConfig();
   const key = appendHashSuffix(normalizeKey(relKey));
-  const presignUrl = new URL("v1/storage/presign/put", forgeUrl + "/");
-  presignUrl.searchParams.set("path", key);
-  const presignResp = await fetch(presignUrl, {
+  const presignUrl2 = new URL("v1/storage/presign/put", forgeUrl + "/");
+  presignUrl2.searchParams.set("path", key);
+  const presignResp = await fetch(presignUrl2, {
     headers: { Authorization: `Bearer ${forgeKey}` }
   });
   if (!presignResp.ok) {
@@ -876,6 +876,49 @@ async function findOverlappingAppointments(params) {
 }
 
 // server/routers.ts
+function isPrivateVercelBlobUrl(url) {
+  try {
+    return new URL(url).hostname.endsWith(".private.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+function pathnameFromBlobUrl(url) {
+  const { pathname } = new URL(url);
+  return decodeURIComponent(pathname.replace(/^\//, ""));
+}
+async function resolveReceiptViewUrl(url) {
+  if (!process.env.BLOB_READ_WRITE_TOKEN || !isPrivateVercelBlobUrl(url)) {
+    return url;
+  }
+  const pathname = pathnameFromBlobUrl(url);
+  if (!pathname.startsWith("555-detail-agenda/receipts/")) {
+    throw new TRPCError3({
+      code: "BAD_REQUEST",
+      message: "URL de comprobante inv\xE1lida"
+    });
+  }
+  try {
+    const token = await issueSignedToken({
+      pathname,
+      operations: ["get"],
+      validUntil: Date.now() + 60 * 60 * 1e3
+    });
+    const { presignedUrl } = await presignUrl(token, {
+      operation: "get",
+      pathname,
+      access: "private",
+      validUntil: Date.now() + 15 * 60 * 1e3
+    });
+    return presignedUrl;
+  } catch (err) {
+    console.error("[receipts] No se pudo firmar URL privada:", err?.message || err);
+    throw new TRPCError3({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "No se pudo generar el enlace del comprobante"
+    });
+  }
+}
 async function assertScheduleAvailable(params) {
   const start = getSlotStart(params.timeSlot);
   const normalizedSlot = buildTimeSlot(start, params.vehicleCount);
@@ -1017,7 +1060,9 @@ var appRouter = router({
         paymentReceiptName: z2.string().optional().nullable()
       })
     ).mutation(async ({ input }) => await finalizeAppointmentWithPayment(input)),
-    // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual)
+    // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual).
+    // Blob privado: el navegador no puede abrir la URL cruda (Forbidden).
+    // Usar getReceiptUrl para obtener un enlace firmado de corta duración.
     uploadReceipt: publicProcedure.input(z2.object({ fileName: z2.string(), contentType: z2.string(), base64Data: z2.string() })).mutation(async ({ input }) => {
       const buffer = Buffer.from(input.base64Data, "base64");
       const safeName = input.fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
@@ -1031,6 +1076,10 @@ var appRouter = router({
       }
       const stored = await storagePut(key, buffer, input.contentType || "application/octet-stream");
       return { key: stored.key, url: stored.url };
+    }),
+    getReceiptUrl: publicProcedure.input(z2.object({ url: z2.string().min(1) })).mutation(async ({ input }) => {
+      const viewUrl = await resolveReceiptViewUrl(input.url);
+      return { url: viewUrl };
     }),
     update: publicProcedure.input(z2.object({ id: z2.number().int(), data: appointmentInputSchema.partial() })).mutation(async ({ input }) => {
       const { vehicles, clientTaxId, ...rest } = input.data;

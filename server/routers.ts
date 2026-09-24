@@ -7,13 +7,62 @@ import {
   getSlotStart,
 } from "@shared/scheduling";
 import { z } from "zod";
-import { put as putBlob } from "@vercel/blob";
+import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
 import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { storagePut } from "./storage";
 import * as db from "./db";
+
+function isPrivateVercelBlobUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.endsWith(".private.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
+function pathnameFromBlobUrl(url: string): string {
+  const { pathname } = new URL(url);
+  return decodeURIComponent(pathname.replace(/^\//, ""));
+}
+
+/** Public blobs open as-is; private blobs need a short-lived signed GET URL. */
+async function resolveReceiptViewUrl(url: string): Promise<string> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN || !isPrivateVercelBlobUrl(url)) {
+    return url;
+  }
+
+  const pathname = pathnameFromBlobUrl(url);
+  if (!pathname.startsWith("555-detail-agenda/receipts/")) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "URL de comprobante inválida",
+    });
+  }
+
+  try {
+    const token = await issueSignedToken({
+      pathname,
+      operations: ["get"],
+      validUntil: Date.now() + 60 * 60 * 1000,
+    });
+    const { presignedUrl } = await presignUrl(token, {
+      operation: "get",
+      pathname,
+      access: "private",
+      validUntil: Date.now() + 15 * 60 * 1000,
+    });
+    return presignedUrl;
+  } catch (err: any) {
+    console.error("[receipts] No se pudo firmar URL privada:", err?.message || err);
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "No se pudo generar el enlace del comprobante",
+    });
+  }
+}
 
 async function assertScheduleAvailable(params: {
   scheduledDate: string;
@@ -199,7 +248,9 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => await db.finalizeAppointmentWithPayment(input)),
 
-    // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual)
+    // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual).
+    // Blob privado: el navegador no puede abrir la URL cruda (Forbidden).
+    // Usar getReceiptUrl para obtener un enlace firmado de corta duración.
     uploadReceipt: publicProcedure
       .input(z.object({ fileName: z.string(), contentType: z.string(), base64Data: z.string() }))
       .mutation(async ({ input }) => {
@@ -217,6 +268,13 @@ export const appRouter = router({
 
         const stored = await storagePut(key, buffer, input.contentType || "application/octet-stream");
         return { key: stored.key, url: stored.url };
+      }),
+
+    getReceiptUrl: publicProcedure
+      .input(z.object({ url: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const viewUrl = await resolveReceiptViewUrl(input.url);
+        return { url: viewUrl };
       }),
 
     update: publicProcedure

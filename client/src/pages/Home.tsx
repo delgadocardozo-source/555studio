@@ -585,6 +585,16 @@ export default function Home() {
   });
 
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
+  const getReceiptUrlMutation = trpc.appointments.getReceiptUrl.useMutation();
+
+  const openReceipt = async (url: string) => {
+    try {
+      const res = await getReceiptUrlMutation.mutateAsync({ url });
+      window.open(res.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      toast.error(err?.message || "No se pudo abrir el comprobante");
+    }
+  };
 
   const deleteMutation = trpc.appointments.delete.useMutation({
     onSuccess: () => {
@@ -2147,14 +2157,15 @@ export default function Home() {
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <a
-                              href={finalizeData.paymentReceiptUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] font-bold text-emerald-400 hover:underline px-2 py-1 rounded bg-emerald-500/10 flex items-center gap-1"
+                            <button
+                              type="button"
+                              onClick={() => void openReceipt(finalizeData.paymentReceiptUrl!)}
+                              disabled={getReceiptUrlMutation.isPending}
+                              className="text-[11px] font-bold text-emerald-400 hover:underline px-2 py-1 rounded bg-emerald-500/10 flex items-center gap-1 disabled:opacity-50"
                             >
-                              <Eye className="w-3 h-3" /> Ver
-                            </a>
+                              <Eye className="w-3 h-3" />
+                              {getReceiptUrlMutation.isPending ? "Abriendo..." : "Ver"}
+                            </button>
                             <button
                               type="button"
                               onClick={() => fileInputRef.current?.click()}
@@ -2984,16 +2995,20 @@ export default function Home() {
                 </div>
                 {selectedAppointment.paymentReceiptUrl && (
                   <div className="pt-1">
-                    <a
-                      href={selectedAppointment.paymentReceiptUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold"
+                    <button
+                      type="button"
+                      onClick={() => void openReceipt(selectedAppointment.paymentReceiptUrl!)}
+                      disabled={getReceiptUrlMutation.isPending}
+                      className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold disabled:opacity-50"
                     >
                       <Receipt className="w-3.5 h-3.5" />
-                      <span>Ver Comprobante Digital</span>
+                      <span>
+                        {getReceiptUrlMutation.isPending
+                          ? "Abriendo comprobante..."
+                          : "Ver Comprobante Digital"}
+                      </span>
                       <ExternalLink className="w-3 h-3" />
-                    </a>
+                    </button>
                   </div>
                 )}
               </div>
