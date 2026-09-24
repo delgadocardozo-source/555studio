@@ -1450,10 +1450,69 @@ async function createContext(opts) {
   };
 }
 
+// server/receiptProxy.ts
+import { get as getBlob2 } from "@vercel/blob";
+function pathnameFromBlobUrl2(url) {
+  const { pathname } = new URL(url);
+  return decodeURIComponent(pathname.replace(/^\//, ""));
+}
+function registerReceiptProxy(app2) {
+  app2.get("/api/receipt", async (req, res) => {
+    try {
+      const rawUrl = typeof req.query.url === "string" ? req.query.url : null;
+      if (!rawUrl) {
+        res.status(400).send("Falta el par\xE1metro url del comprobante");
+        return;
+      }
+      let parsed;
+      try {
+        parsed = new URL(rawUrl);
+      } catch {
+        res.status(400).send("URL de comprobante inv\xE1lida");
+        return;
+      }
+      if (!parsed.hostname.endsWith(".private.blob.vercel-storage.com")) {
+        res.redirect(302, rawUrl);
+        return;
+      }
+      const pathname = pathnameFromBlobUrl2(rawUrl);
+      if (!pathname.startsWith("555-detail-agenda/receipts/")) {
+        res.status(400).send("URL de comprobante fuera del prefijo permitido");
+        return;
+      }
+      const result = await getBlob2(pathname, { access: "private", useCache: false });
+      if (!result || result.statusCode !== 200 || !result.stream) {
+        res.status(404).send("Comprobante no encontrado. Puede que no se haya terminado de subir.");
+        return;
+      }
+      const buf = Buffer.from(await new Response(result.stream).arrayBuffer());
+      if (buf.length === 0) {
+        res.status(404).send("Comprobante vac\xEDo (0 bytes)");
+        return;
+      }
+      const contentType = result.blob.contentType || "application/octet-stream";
+      res.status(200);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(buf.length));
+      res.setHeader("Cache-Control", "private, no-cache");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${pathname.split("/").pop() || "comprobante"}"`
+      );
+      res.end(buf);
+    } catch (err) {
+      console.error("[api/receipt]", err?.message || err);
+      res.status(500).send(`Error al leer el comprobante: ${err?.message || "desconocido"}`);
+    }
+  });
+}
+
 // server/vercel-api.ts
 var app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
+registerReceiptProxy(app);
 app.use(
   "/api/trpc",
   createExpressMiddleware({

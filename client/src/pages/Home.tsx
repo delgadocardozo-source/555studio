@@ -35,6 +35,7 @@ import {
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
+import { isLikelyPdfReceipt, receiptViewUrl } from "@/lib/receiptUrl";
 import {
   START_TIMES,
   MINUTES_PER_VEHICLE,
@@ -106,6 +107,11 @@ export default function Home() {
   const [moveModeId, setMoveModeId] = useState<number | null>(null);
   const [dropHoverKey, setDropHoverKey] = useState<string | null>(null);
   const [moveSheetOpen, setMoveSheetOpen] = useState(false);
+  const [receiptViewer, setReceiptViewer] = useState<{
+    url: string;
+    title: string;
+    isPdf: boolean;
+  } | null>(null);
   const [moveShowAllStarts, setMoveShowAllStarts] = useState(false);
 
   // Modales
@@ -410,7 +416,7 @@ export default function Home() {
     }
   }, [dayAppointmentsSorted, selectedAppointmentId]);
 
-  const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen || moveSheetOpen;
+  const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen || moveSheetOpen || !!receiptViewer;
   React.useEffect(() => {
     if (!anyModalOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -586,23 +592,18 @@ export default function Home() {
 
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
 
-  /** Privados: proxy same-origin (evita Forbidden). Públicos / manus: URL directa. */
-  const openReceipt = (url: string) => {
+  /** Muestra el comprobante dentro de la app (nunca navega a private.blob → Forbidden). */
+  const openReceipt = (url: string, fileName?: string | null) => {
     if (!url) {
       toast.error("No hay comprobante cargado");
       return;
     }
-    const isPrivateBlob = (() => {
-      try {
-        return new URL(url).hostname.endsWith(".private.blob.vercel-storage.com");
-      } catch {
-        return false;
-      }
-    })();
-    const target = isPrivateBlob
-      ? `/api/receipt?url=${encodeURIComponent(url)}`
-      : url;
-    window.open(target, "_blank", "noopener,noreferrer");
+    const viewUrl = receiptViewUrl(url);
+    setReceiptViewer({
+      url: viewUrl,
+      title: fileName || "Comprobante digital",
+      isPdf: isLikelyPdfReceipt(url, fileName),
+    });
   };
 
   const deleteMutation = trpc.appointments.delete.useMutation({
@@ -2168,7 +2169,12 @@ export default function Home() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               type="button"
-                              onClick={() => openReceipt(finalizeData.paymentReceiptUrl!)}
+                              onClick={() =>
+                                openReceipt(
+                                  finalizeData.paymentReceiptUrl!,
+                                  finalizeData.paymentReceiptName
+                                )
+                              }
                               className="text-[11px] font-bold text-emerald-400 hover:underline px-2 py-1 rounded bg-emerald-500/10 flex items-center gap-1"
                             >
                               <Eye className="w-3 h-3" /> Ver
@@ -3004,12 +3010,17 @@ export default function Home() {
                   <div className="pt-1">
                     <button
                       type="button"
-                      onClick={() => openReceipt(selectedAppointment.paymentReceiptUrl!)}
+                      onClick={() =>
+                        openReceipt(
+                          selectedAppointment.paymentReceiptUrl!,
+                          selectedAppointment.paymentReceiptName
+                        )
+                      }
                       className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold"
                     >
                       <Receipt className="w-3.5 h-3.5" />
                       <span>Ver Comprobante Digital</span>
-                      <ExternalLink className="w-3 h-3" />
+                      <Eye className="w-3 h-3" />
                     </button>
                   </div>
                 )}
@@ -3128,6 +3139,70 @@ export default function Home() {
                   Cerrar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {receiptViewer && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setReceiptViewer(null)}
+          />
+          <div className="relative w-full sm:max-w-lg max-h-[92vh] bg-slate-950 border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
+              <div className="min-w-0">
+                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
+                  Comprobante
+                </p>
+                <p className="text-sm font-bold text-white truncate">{receiptViewer.title}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptViewer(null)}
+                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white"
+                aria-label="Cerrar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-slate-900/50 p-3 min-h-[240px] flex items-center justify-center">
+              {receiptViewer.isPdf ? (
+                <iframe
+                  title={receiptViewer.title}
+                  src={receiptViewer.url}
+                  className="w-full h-[70vh] rounded-xl border border-slate-800 bg-white"
+                />
+              ) : (
+                <img
+                  src={receiptViewer.url}
+                  alt={receiptViewer.title}
+                  className="max-w-full max-h-[70vh] object-contain rounded-xl"
+                  onError={() =>
+                    toast.error(
+                      "No se pudo cargar el comprobante. Probá de nuevo o subí el archivo otra vez."
+                    )
+                  }
+                />
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-slate-800 flex gap-2 shrink-0">
+              <a
+                href={receiptViewer.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 text-center text-xs font-bold text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 py-2.5 rounded-xl"
+              >
+                Abrir en pestaña
+              </a>
+              <button
+                type="button"
+                onClick={() => setReceiptViewer(null)}
+                className="flex-1 text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>
