@@ -280,6 +280,29 @@ export default function Home() {
     return { morning, afternoon, totalRaw: moveAvailableStarts.length };
   }, [moveAvailableStarts, moveFreeWindows, moveShowAllStarts, movingAppointment]);
 
+  /** Turnos que ocupan el resto del día (explica por qué no hay “hacia adelante”). */
+  const moveBlockers = useMemo(() => {
+    if (!movingAppointment) return [];
+    const currentStart = timeToMinutes(getSlotStart(String(movingAppointment.timeSlot || "")));
+    return dayAppointmentsSorted
+      .filter((a) => a.id !== movingAppointment.id && a.status !== "cancelado")
+      .map((a) => {
+        const cars = appointmentVehicleCount(a);
+        const slot = buildTimeSlot(getSlotStart(String(a.timeSlot || "")), cars);
+        const range = parseTimeSlot(slot);
+        return {
+          id: a.id,
+          clientName: a.clientName,
+          cars,
+          slot,
+          start: range?.start ?? 0,
+          end: range?.end ?? 0,
+        };
+      })
+      .filter((b) => b.end > currentStart)
+      .sort((a, b) => a.start - b.start);
+  }, [movingAppointment, dayAppointmentsSorted]);
+
   const openMoveSheet = (app: any) => {
     setMoveModeId(app.id);
     setDraggingId(null);
@@ -2670,11 +2693,31 @@ export default function Home() {
                     );
                   })}
 
+                  {moveBlockers.length > 0 && (
+                    <div className="rounded-2xl border border-slate-700 bg-slate-900/80 px-3 py-2.5 space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">
+                        Por qué no hay hueco más tarde
+                      </p>
+                      {moveBlockers.map((b) => (
+                        <p key={b.id} className="text-[11px] text-slate-300 leading-snug">
+                          <strong className="text-white">{b.clientName}</strong>
+                          {" · "}
+                          {b.slot}
+                          {" · "}
+                          {b.cars} auto(s) = {formatDuration(durationForVehicles(b.cars))}
+                        </p>
+                      ))}
+                      <p className="text-[10px] text-slate-500 pt-1">
+                        Para liberar la tarde, primero mové o acortá el turno que la ocupa (ej. un
+                        servicio de 3 autos ocupa 4h).
+                      </p>
+                    </div>
+                  )}
+
                   {moveStartsGrouped.afternoon.length === 0 &&
-                    moveFreeWindows.every((w) => timeToMinutes(w.start) < 12 * 60) &&
-                    moveAvailableStarts.some((s) => timeToMinutes(s) >= 12 * 60) === false && (
+                    moveFreeWindows.every((w) => timeToMinutes(w.start) < 12 * 60) && (
                       <p className="text-[11px] text-slate-500 text-center">
-                        No hay hueco libre en la tarde que alcance para{" "}
+                        No hay hueco libre en la tarde para{" "}
                         {formatDuration(durationForVehicles(movingVehicleCount))}.
                       </p>
                     )}
