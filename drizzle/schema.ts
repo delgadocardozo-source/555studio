@@ -147,3 +147,24 @@ export const appointments = mysqlTable("appointments", {
 
 export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = typeof appointments.$inferInsert;
+
+/**
+ * Libro de caja: ingresos y egresos operativos.
+ * Independiente del cobro de turnos (appointments.payment*).
+ */
+export const cashMovementTypeEnum = mysqlEnum("cashMovementType", ["ingreso", "egreso"]);
+
+export const cashMovements = mysqlTable("cash_movements", {
+  id: int("id").autoincrement().primaryKey(),
+  type: cashMovementTypeEnum.notNull(),
+  amount: int("amount").notNull(),
+  movementDate: varchar("movementDate", { length: 10 }).notNull(),
+  person: varchar("person", { length: 120 }).notNull(),
+  category: varchar("category", { length: 80 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CashMovementRow = typeof cashMovements.$inferSelect;
+export type InsertCashMovement = typeof cashMovements.$inferInsert;

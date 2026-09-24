@@ -31,8 +31,10 @@ import {
   Pencil,
   Printer,
   GripVertical,
+  Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CashLedgerPanel } from "@/components/CashLedgerPanel";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
 import { isLikelyPdfReceipt, receiptViewUrl } from "@/lib/receiptUrl";
@@ -100,7 +102,9 @@ export default function Home() {
   const [paymentFilter, setPaymentFilter] = useState<string>("todos");
   const [vehicleFilter, setVehicleFilter] = useState<string>("todos");
   const [clientTypeFilter, setClientTypeFilter] = useState<string>("todos");
-  const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview">("calendario");
+  const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview" | "caja">(
+    "calendario"
+  );
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -1209,6 +1213,17 @@ export default function Home() {
               Órdenes ({appointments.length})
             </button>
             <button
+              onClick={() => setActiveTab("caja")}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                activeTab === "caja"
+                  ? "bg-red-600 text-white shadow-md shadow-red-600/30"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 shrink-0" />
+              <span>Caja</span>
+            </button>
+            <button
               onClick={() => setActiveTab("portal_preview")}
               className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                 activeTab === "portal_preview"
@@ -1282,7 +1297,8 @@ export default function Home() {
           )}
         </div>
 
-        {/* Buscador y Gatillo de Filtros para Mobile */}
+        {/* Buscador agenda (oculto en Caja) */}
+        {activeTab !== "caja" && (
         <div className="hidden sm:flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1321,6 +1337,7 @@ export default function Home() {
             )}
           </button>
         </div>
+        )}
 
         {/* Panel Desplegable de Filtros */}
         {showMobileFilters && (
@@ -1910,6 +1927,9 @@ export default function Home() {
           </div>
         )}
 
+        {/* VISTA: CAJA (ingresos / egresos) — aparte de la agenda */}
+        {activeTab === "caja" && <CashLedgerPanel />}
+
         {/* VISTA 3: PREVIEW PORTAL CLIENTES */}
         {activeTab === "portal_preview" && (
           <div className="max-w-2xl mx-auto space-y-4 pt-1">
@@ -1994,7 +2014,7 @@ export default function Home() {
       </main>
 
       {/* Barra de Acciones Flotante Fija en Celulares */}
-      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#080d1a] border-t border-slate-800/90 px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3">
+      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#080d1a] border-t border-slate-800/90 px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-1.5">
         <button
           type="button"
           onClick={() => setActiveTab("calendario")}
@@ -2008,8 +2028,19 @@ export default function Home() {
 
         <button
           type="button"
+          onClick={() => setActiveTab("caja")}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold transition-colors ${
+            activeTab === "caja" ? "text-red-400" : "text-slate-400"
+          }`}
+        >
+          <Wallet className="w-4 h-4 mb-0.5" />
+          <span>Caja</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => handleOpenCreateModal()}
-          className="flex items-center justify-center gap-1.5 bg-red-600 active:bg-red-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl shadow-lg shadow-red-600/40 transition-colors cursor-pointer"
+          className="flex items-center justify-center gap-1.5 bg-red-600 active:bg-red-700 text-white font-extrabold text-xs px-3.5 py-2.5 rounded-2xl shadow-lg shadow-red-600/40 transition-colors cursor-pointer"
         >
           <Plus className="w-4 h-4 stroke-[3]" />
           <span>Agendar</span>
