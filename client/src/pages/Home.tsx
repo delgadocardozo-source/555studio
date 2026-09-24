@@ -2783,6 +2783,18 @@ export default function Home() {
 
               <button
                 type="button"
+                onClick={() => {
+                  setIsDetailOpen(false);
+                  openMoveSheet(selectedAppointment);
+                }}
+                className="w-full bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-100 font-bold py-3 rounded-2xl transition-all flex items-center justify-center gap-2 active:scale-95 touch-manipulation cursor-pointer"
+              >
+                <GripVertical className="w-4 h-4 text-amber-300" />
+                <span>Mover horario</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleOpenEditModal(selectedAppointment)}
                 className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-3 rounded-2xl transition-all flex items-center justify-center gap-2 active:scale-95 touch-manipulation cursor-pointer"
               >
