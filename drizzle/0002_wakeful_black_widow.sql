@@ -1,0 +1,1 @@
+ALTER TABLE `appointments` ADD `locationUrl` varchar(1024);
