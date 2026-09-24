@@ -52,6 +52,7 @@ import {
   isPendingWashStatus,
   minutesToTime,
   parseTimeSlot,
+  timeToMinutes,
   washesThatFitInGap,
 } from "@shared/scheduling";
 
@@ -105,6 +106,7 @@ export default function Home() {
   const [moveModeId, setMoveModeId] = useState<number | null>(null);
   const [dropHoverKey, setDropHoverKey] = useState<string | null>(null);
   const [moveSheetOpen, setMoveSheetOpen] = useState(false);
+  const [moveShowAllStarts, setMoveShowAllStarts] = useState(false);
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -237,9 +239,51 @@ export default function Home() {
     return availableStartTimes(appointmentVehicleCount(movingAppointment), occupied);
   }, [movingAppointment, dayAppointmentsSorted]);
 
+  /** Huecos reales donde cabe el turno (lo que el usuario espera ver: mañana / tarde). */
+  const moveFreeWindows = useMemo(() => {
+    if (!movingAppointment) return [];
+    return dayFreeGaps
+      .map((gap) => {
+        const start = earliestStartInGap(gap, movingVehicleCount);
+        if (!start) return null;
+        return {
+          key: `win-${gap.start}-${gap.end}`,
+          gapStart: gap.start,
+          gapEnd: gap.end,
+          start,
+          slot: buildTimeSlot(start, movingVehicleCount),
+        };
+      })
+      .filter((w): w is NonNullable<typeof w> => w != null);
+  }, [dayFreeGaps, movingAppointment, movingVehicleCount]);
+
+  const moveStartsGrouped = useMemo(() => {
+    const current = movingAppointment
+      ? getSlotStart(String(movingAppointment.timeSlot || ""))
+      : "";
+    const preferred = new Set(moveFreeWindows.map((w) => w.start));
+    if (current) preferred.add(current);
+
+    const filtered = moveAvailableStarts.filter((start) => {
+      if (moveShowAllStarts) return true;
+      const mins = timeToMinutes(start);
+      // Grilla cómoda cada 15 min + inicios de hueco + horario actual
+      return preferred.has(start) || mins % 15 === 0;
+    });
+
+    const morning: string[] = [];
+    const afternoon: string[] = [];
+    for (const start of filtered) {
+      if (timeToMinutes(start) < 12 * 60) morning.push(start);
+      else afternoon.push(start);
+    }
+    return { morning, afternoon, totalRaw: moveAvailableStarts.length };
+  }, [moveAvailableStarts, moveFreeWindows, moveShowAllStarts, movingAppointment]);
+
   const openMoveSheet = (app: any) => {
     setMoveModeId(app.id);
     setDraggingId(null);
+    setMoveShowAllStarts(false);
     setMoveSheetOpen(true);
     setSelectedAppointmentId(app.id);
   };
@@ -249,6 +293,7 @@ export default function Home() {
     setMoveModeId(null);
     setDraggingId(null);
     setDropHoverKey(null);
+    setMoveShowAllStarts(false);
   };
 
   type TimelineItem =
@@ -2540,38 +2585,112 @@ export default function Home() {
               <p className="text-[11px] text-slate-500 mt-0.5">
                 Ahora: {buildTimeSlot(getSlotStart(String(movingAppointment.timeSlot || "")), movingVehicleCount)}
               </p>
+              <p className="text-[11px] text-amber-200/90 mt-2">
+                Solo aparecen huecos donde entra el lavado completo. Un hueco de 40 min (ej. 12:00–12:40) no alcanza.
+              </p>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-3">
-              {moveAvailableStarts.length === 0 ? (
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 overscroll-contain">
+              {moveFreeWindows.length === 0 && moveAvailableStarts.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-8">
                   No hay otro horario libre hoy para esta duración.
                 </p>
               ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  {moveAvailableStarts.map((start) => {
-                    const slot = buildTimeSlot(start, movingVehicleCount);
-                    const current = getSlotStart(String(movingAppointment.timeSlot || "")) === start;
+                <>
+                  {moveFreeWindows.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 mb-2">
+                        Huecos libres (recomendado)
+                      </p>
+                      <div className="space-y-2">
+                        {moveFreeWindows.map((win) => {
+                          const current =
+                            getSlotStart(String(movingAppointment.timeSlot || "")) === win.start;
+                          return (
+                            <button
+                              key={win.key}
+                              type="button"
+                              disabled={rescheduleMutation.isPending || current}
+                              onClick={() => handleRescheduleToStart(movingAppointment, win.start)}
+                              className={`w-full rounded-2xl border px-3 py-3 text-left active:scale-[0.99] touch-manipulation ${
+                                current
+                                  ? "border-slate-700 bg-slate-900 text-slate-500"
+                                  : "border-emerald-500/50 bg-emerald-500/15 text-white"
+                              }`}
+                            >
+                              <span className="block text-sm font-extrabold">
+                                Empezar {win.start} → {win.slot.split(" - ")[1]}
+                              </span>
+                              <span className="block text-[11px] text-slate-400 mt-0.5">
+                                Hueco disponible {minutesToTime(win.gapStart)} – {minutesToTime(win.gapEnd)}
+                                {timeToMinutes(win.start) >= 12 * 60 ? " · tarde" : " · mañana"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {(["morning", "afternoon"] as const).map((period) => {
+                    const starts =
+                      period === "morning" ? moveStartsGrouped.morning : moveStartsGrouped.afternoon;
+                    if (starts.length === 0) return null;
                     return (
-                      <button
-                        key={start}
-                        type="button"
-                        disabled={rescheduleMutation.isPending || current}
-                        onClick={() => handleRescheduleToStart(movingAppointment, start)}
-                        className={`rounded-xl border px-2 py-3 text-center active:scale-95 touch-manipulation ${
-                          current
-                            ? "border-slate-700 bg-slate-900 text-slate-500"
-                            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
-                        }`}
-                      >
-                        <span className="block text-sm font-extrabold">{start}</span>
-                        <span className="block text-[10px] text-slate-400 mt-0.5">
-                          → {slot.split(" - ")[1]}
-                        </span>
-                      </button>
+                      <div key={period}>
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">
+                          {period === "morning" ? "Mañana (detalle)" : "Tarde (detalle)"}
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {starts.map((start) => {
+                            const slot = buildTimeSlot(start, movingVehicleCount);
+                            const current =
+                              getSlotStart(String(movingAppointment.timeSlot || "")) === start;
+                            return (
+                              <button
+                                key={start}
+                                type="button"
+                                disabled={rescheduleMutation.isPending || current}
+                                onClick={() => handleRescheduleToStart(movingAppointment, start)}
+                                className={`rounded-xl border px-2 py-3 text-center active:scale-95 touch-manipulation ${
+                                  current
+                                    ? "border-slate-700 bg-slate-900 text-slate-500"
+                                    : "border-slate-600 bg-slate-900 text-slate-100 hover:border-emerald-500/50"
+                                }`}
+                              >
+                                <span className="block text-sm font-extrabold">{start}</span>
+                                <span className="block text-[10px] text-slate-400 mt-0.5">
+                                  → {slot.split(" - ")[1]}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     );
                   })}
-                </div>
+
+                  {moveStartsGrouped.afternoon.length === 0 &&
+                    moveFreeWindows.every((w) => timeToMinutes(w.start) < 12 * 60) &&
+                    moveAvailableStarts.some((s) => timeToMinutes(s) >= 12 * 60) === false && (
+                      <p className="text-[11px] text-slate-500 text-center">
+                        No hay hueco libre en la tarde que alcance para{" "}
+                        {formatDuration(durationForVehicles(movingVehicleCount))}.
+                      </p>
+                    )}
+
+                  {moveStartsGrouped.totalRaw > moveStartsGrouped.morning.length + moveStartsGrouped.afternoon.length && (
+                    <button
+                      type="button"
+                      onClick={() => setMoveShowAllStarts((v) => !v)}
+                      className="w-full text-[11px] font-bold text-slate-300 underline py-1"
+                    >
+                      {moveShowAllStarts
+                        ? "Ver menos horarios"
+                        : `Ver todos (${moveStartsGrouped.totalRaw} inicios cada 5 min)`}
+                    </button>
+                  )}
+                </>
               )}
             </div>
 
