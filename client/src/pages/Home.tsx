@@ -826,8 +826,17 @@ export default function Home() {
       return;
     }
 
+    if (formAvailableStarts.length === 0) {
+      toast.error(
+        `No hay hueco libre ese día para ${validVehicles.length} vehículo(s) (${formatDuration(durationForVehicles(validVehicles.length))}). Probá otra fecha o menos vehículos.`
+      );
+      return;
+    }
+
     if (isStartTimeBlocked(formStartTime)) {
-      toast.error("Ese horario se solapa con otro turno. Cada vehículo lleva 1h 20min.");
+      toast.error(
+        "Ese horario se solapa con otro turno (cada vehículo lleva 1h 20min). Elegí una hora libre de la lista."
+      );
       return;
     }
 
@@ -2665,6 +2674,11 @@ export default function Home() {
                     }
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-red-500"
                   >
+                    {formAvailableStarts.length === 0 && (
+                      <option value={formStartTime}>
+                        Sin huecos libres para {formVehicleCount} vehículo(s)
+                      </option>
+                    )}
                     {START_TIMES.map((start) => {
                       const blocked = isStartTimeBlocked(start);
                       const preview = buildTimeSlot(start, formVehicleCount);
@@ -2681,6 +2695,9 @@ export default function Home() {
                     {" · "}duración {formDurationLabel} ({formVehicleCount} vehículo
                     {formVehicleCount > 1 ? "s" : ""})
                     {" · "}últ. inicio {WORKDAY_LAST_START}
+                    {formAvailableStarts.length === 0
+                      ? " · no hay hueco libre este día"
+                      : ` · ${formAvailableStarts.length} inicio(s) libre(s)`}
                   </p>
                 </div>
               </div>

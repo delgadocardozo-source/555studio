@@ -1280,10 +1280,11 @@ async function assertScheduleAvailable(params) {
     excludeId: params.excludeId
   });
   if (overlaps.length > 0) {
-    const conflict = overlaps[0];
+    const names = overlaps.slice(0, 3).map((c) => `${c.clientName} (${c.timeSlot})`).join("; ");
+    const extra = overlaps.length > 3 ? ` y ${overlaps.length - 3} m\xE1s` : "";
     throw new TRPCError3({
       code: "CONFLICT",
-      message: `Horario ocupado: se solapa con ${conflict.clientName} (${conflict.timeSlot}). Cada veh\xEDculo requiere 1h 20min.`
+      message: `Horario ocupado: se solapa con ${names}${extra}. Cada veh\xEDculo requiere 1h 20min \u2014 eleg\xED otro inicio o mov\xE9 el turno que choca.`
     });
   }
   return normalizedSlot;
@@ -1461,12 +1462,22 @@ var appRouter = router({
       const nextDate = payload.scheduledDate || existing.scheduledDate;
       const nextVehicleCount = payload.vehicleCount != null ? Number(payload.vehicleCount) : Number(existing.vehicleCount) || 1;
       const nextSlotInput = payload.timeSlot || existing.timeSlot;
-      payload.timeSlot = await assertScheduleAvailable({
-        scheduledDate: nextDate,
-        timeSlot: nextSlotInput,
-        vehicleCount: nextVehicleCount,
-        excludeId: input.id
-      });
+      const existingNormalized = buildTimeSlot(
+        getSlotStart(String(existing.timeSlot || "")),
+        Number(existing.vehicleCount) > 0 ? Number(existing.vehicleCount) : 1
+      );
+      const nextNormalized = buildTimeSlot(getSlotStart(String(nextSlotInput)), nextVehicleCount);
+      const scheduleChanged = String(nextDate) !== String(existing.scheduledDate) || nextNormalized !== existingNormalized;
+      if (scheduleChanged) {
+        payload.timeSlot = await assertScheduleAvailable({
+          scheduledDate: nextDate,
+          timeSlot: nextSlotInput,
+          vehicleCount: nextVehicleCount,
+          excludeId: input.id
+        });
+      } else {
+        payload.timeSlot = existingNormalized;
+      }
       if (input.data.clientPhone && input.data.clientName) {
         await upsertCustomerProfile({
           clientName: input.data.clientName,
