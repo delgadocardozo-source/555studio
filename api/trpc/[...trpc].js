@@ -97,6 +97,32 @@ function fitsInWorkday(startTime, _vehicleCount = 1) {
   const start = timeToMinutes(startTime);
   return start >= timeToMinutes(WORKDAY_START) && start <= timeToMinutes(WORKDAY_LAST_START);
 }
+function appointmentVehicleCount(row) {
+  const count = Number(row.vehicleCount);
+  if (Number.isFinite(count) && count > 0) return count;
+  if (typeof row.vehicles === "string" && row.vehicles.trim()) {
+    try {
+      const parsed = JSON.parse(row.vehicles);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.length;
+    } catch {
+    }
+  }
+  if (Array.isArray(row.vehicles) && row.vehicles.length > 0) return row.vehicles.length;
+  return 1;
+}
+function normalizeTimeSlot(timeSlot, vehicleCount) {
+  return buildTimeSlot(getSlotStart(timeSlot), vehicleCount);
+}
+function withNormalizedTimeSlot(row) {
+  const cars = appointmentVehicleCount(row);
+  const slot = String(row.timeSlot || "");
+  if (!slot) return { ...row, vehicleCount: cars };
+  return {
+    ...row,
+    vehicleCount: cars,
+    timeSlot: normalizeTimeSlot(slot, cars)
+  };
+}
 
 // server/routers.ts
 import { z as z2 } from "zod";
@@ -465,6 +491,28 @@ async function readBlobAppointments() {
     return [];
   }
 }
+function normalizeAppointmentRow(row) {
+  return withNormalizedTimeSlot(row);
+}
+async function readBlobAppointmentsNormalized() {
+  const rows = await readBlobAppointments();
+  const normalized = rows.map(normalizeAppointmentRow);
+  const needsHeal = normalized.some((row, i) => row.timeSlot !== rows[i]?.timeSlot);
+  if (needsHeal) {
+    void withAppointmentsLock(async () => {
+      const fresh = await readBlobAppointments();
+      const healed = fresh.map(normalizeAppointmentRow);
+      const changed = healed.some((row, i) => row.timeSlot !== fresh[i]?.timeSlot);
+      if (changed) {
+        console.info("[appointments] Normalizando timeSlot a N\xD780 min (1h20 por veh\xEDculo)");
+        await writeBlobAppointments(healed);
+      }
+    }).catch((err) => {
+      console.error("[appointments] No se pudo persistir timeSlots normalizados:", err?.message || err);
+    });
+  }
+  return normalized;
+}
 async function putJsonBlob(pathname, rows) {
   await putBlob(pathname, JSON.stringify(rows), {
     access: "private",
@@ -680,8 +728,8 @@ async function getUserByOpenId(openId) {
 }
 async function listAppointments(filters = {}) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    return rows.filter((row) => matchFilters(row, filters)).sort((a, b) => `${b.scheduledDate} ${b.timeSlot}`.localeCompare(`${a.scheduledDate} ${a.timeSlot}`));
+    const rows2 = await readBlobAppointmentsNormalized();
+    return rows2.filter((row) => matchFilters(row, filters)).sort((a, b) => `${b.scheduledDate} ${b.timeSlot}`.localeCompare(`${a.scheduledDate} ${a.timeSlot}`));
   }
   const db = await getDb();
   if (!db) return [];
@@ -709,17 +757,18 @@ async function listAppointments(filters = {}) {
     );
   }
   const query = db.select().from(appointments).orderBy(desc(appointments.scheduledDate), appointments.timeSlot);
-  return conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+  const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+  return rows.map((row) => withNormalizedTimeSlot(row));
 }
 async function getAppointmentById(id) {
   if (isVercelBlobRuntime()) {
-    const rows2 = await readBlobAppointments();
+    const rows2 = await readBlobAppointmentsNormalized();
     return rows2.find((row) => row.id === id);
   }
   const db = await getDb();
   if (!db) return void 0;
   const rows = await db.select().from(appointments).where(eq(appointments.id, id)).limit(1);
-  return rows[0];
+  return rows[0] ? withNormalizedTimeSlot(rows[0]) : void 0;
 }
 async function createAppointment(data) {
   const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
@@ -728,13 +777,13 @@ async function createAppointment(data) {
   if (isVercelBlobRuntime()) {
     return withAppointmentsLock(async () => {
       const rows = await readBlobAppointments();
-      const created2 = {
+      const created2 = normalizeAppointmentRow({
         ...data,
         id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
         code,
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
+      });
       rows.push(created2);
       await writeBlobAppointments(rows);
       return created2;
@@ -752,7 +801,7 @@ async function updateAppointmentStatus(id, status) {
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], status, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], status, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });
@@ -782,7 +831,7 @@ async function finalizeAppointmentWithPayment(params) {
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === params.id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], ...payload, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], ...payload, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });
@@ -798,7 +847,7 @@ async function updateAppointmentDetails(id, data) {
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });

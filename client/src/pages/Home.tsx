@@ -1829,7 +1829,7 @@ export default function Home() {
                   </div>
 
                   <div className="pt-2 border-t border-slate-800 flex justify-between items-center text-xs">
-                    <span className="text-slate-400">{app.scheduledDate} · {app.timeSlot}</span>
+                    <span className="text-slate-400">{app.scheduledDate} · {buildTimeSlot(getSlotStart(String(app.timeSlot || "")), appointmentVehicleCount(app))}</span>
                     <span className="font-extrabold text-red-400 font-display text-sm">
                       {app.servicePrice.toLocaleString("es-PY")} Gs.
                     </span>
@@ -1860,7 +1860,7 @@ export default function Home() {
                       <td className="px-4 py-3 font-mono font-medium text-slate-300">{app.code}</td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-white">{app.scheduledDate}</div>
-                        <div className="text-[11px] text-slate-500">{app.timeSlot}</div>
+                        <div className="text-[11px] text-slate-500">{buildTimeSlot(getSlotStart(String(app.timeSlot || "")), appointmentVehicleCount(app))}</div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-white">{app.clientName}</div>

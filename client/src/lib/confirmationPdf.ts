@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { appointmentVehicleCount } from "@shared/scheduling";
+import { appointmentVehicleCount, normalizeTimeSlot } from "@shared/scheduling";
 import { LOGO_555_PNG_BASE64 } from "./logo555Base64";
 
 const LOGO_DATA_URL = `data:image/png;base64,${LOGO_555_PNG_BASE64}`;
@@ -23,6 +23,7 @@ function vehicleLabel(count: number): string {
 
 export function buildConfirmationText(app: any): string {
   const count = appointmentVehicleCount(app);
+  const slot = normalizeTimeSlot(String(app.timeSlot || ""), count);
   return [
     "555 DETAIL STUDIO",
     "Confirmación de servicio",
@@ -30,7 +31,7 @@ export function buildConfirmationText(app: any): string {
     `Cliente: ${app.clientName}`,
     app.clientTaxId ? `RUC: ${app.clientTaxId}` : null,
     `Fecha: ${formatDateEs(app.scheduledDate)}`,
-    `Horario: ${app.timeSlot}`,
+    `Horario: ${slot}`,
     vehicleLabel(count),
     `Total: ${formatGs(app.servicePrice)}`,
   ]
@@ -116,7 +117,7 @@ export async function createConfirmationPdf(app: any) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(14);
   doc.setTextColor(45, 45, 45);
-  doc.text(String(app.timeSlot || "—"), pageW / 2, y, { align: "center" });
+  doc.text(normalizeTimeSlot(String(app.timeSlot || ""), count) || "—", pageW / 2, y, { align: "center" });
   y += 13;
 
   doc.setFont("helvetica", "bold");

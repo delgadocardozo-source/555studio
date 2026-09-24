@@ -2,7 +2,7 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { get as getBlob, put as putBlob } from "@vercel/blob";
 import { appointments, Appointment, InsertAppointment, customers, Customer, InsertCustomer, InsertUser, users } from "../drizzle/schema";
-import { timeSlotsOverlap } from "../shared/scheduling";
+import { timeSlotsOverlap, withNormalizedTimeSlot } from "../shared/scheduling";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -58,6 +58,31 @@ async function readBlobAppointments(): Promise<StoredAppointment[]> {
   } catch {
     return [];
   }
+}
+
+/** Asegura timeSlot = inicio + N×80 (corrige franjas viejas de 90 min). */
+function normalizeAppointmentRow(row: StoredAppointment): StoredAppointment {
+  return withNormalizedTimeSlot(row);
+}
+
+async function readBlobAppointmentsNormalized(): Promise<StoredAppointment[]> {
+  const rows = await readBlobAppointments();
+  const normalized = rows.map(normalizeAppointmentRow);
+  const needsHeal = normalized.some((row, i) => row.timeSlot !== rows[i]?.timeSlot);
+  if (needsHeal) {
+    void withAppointmentsLock(async () => {
+      const fresh = await readBlobAppointments();
+      const healed = fresh.map(normalizeAppointmentRow);
+      const changed = healed.some((row, i) => row.timeSlot !== fresh[i]?.timeSlot);
+      if (changed) {
+        console.info("[appointments] Normalizando timeSlot a N×80 min (1h20 por vehículo)");
+        await writeBlobAppointments(healed);
+      }
+    }).catch((err) => {
+      console.error("[appointments] No se pudo persistir timeSlots normalizados:", err?.message || err);
+    });
+  }
+  return normalized;
 }
 
 async function putJsonBlob(pathname: string, rows: unknown[]) {
@@ -345,7 +370,7 @@ export interface AppointmentFilters {
 
 export async function listAppointments(filters: AppointmentFilters = {}) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
+    const rows = await readBlobAppointmentsNormalized();
     return rows
       .filter((row) => matchFilters(row, filters))
       .sort((a, b) => `${b.scheduledDate} ${b.timeSlot}`.localeCompare(`${a.scheduledDate} ${a.timeSlot}`));
@@ -380,18 +405,19 @@ export async function listAppointments(filters: AppointmentFilters = {}) {
   }
 
   const query = db.select().from(appointments).orderBy(desc(appointments.scheduledDate), appointments.timeSlot);
-  return conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+  const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+  return rows.map((row) => withNormalizedTimeSlot(row as StoredAppointment));
 }
 
 export async function getAppointmentById(id: number) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
+    const rows = await readBlobAppointmentsNormalized();
     return rows.find((row) => row.id === id);
   }
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db.select().from(appointments).where(eq(appointments.id, id)).limit(1);
-  return rows[0];
+  return rows[0] ? withNormalizedTimeSlot(rows[0] as StoredAppointment) : undefined;
 }
 
 export async function createAppointment(data: Omit<InsertAppointment, "id" | "code" | "createdAt" | "updatedAt">) {
@@ -402,13 +428,13 @@ export async function createAppointment(data: Omit<InsertAppointment, "id" | "co
   if (isVercelBlobRuntime()) {
     return withAppointmentsLock(async () => {
       const rows = await readBlobAppointments();
-      const created: StoredAppointment = {
+      const created: StoredAppointment = normalizeAppointmentRow({
         ...data,
         id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
         code,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      };
+      });
       rows.push(created);
       await writeBlobAppointments(rows);
       return created;
@@ -428,7 +454,7 @@ export async function updateAppointmentStatus(id: number, status: Appointment["s
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], status, updatedAt: new Date().toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], status, updatedAt: new Date().toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });
@@ -470,7 +496,7 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === params.id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], ...payload, updatedAt: new Date().toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], ...payload, updatedAt: new Date().toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });
@@ -491,7 +517,7 @@ export async function updateAppointmentDetails(
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw new Error("Turno no encontrado");
-      rows[index] = { ...rows[index], ...data, updatedAt: new Date().toISOString() };
+      rows[index] = normalizeAppointmentRow({ ...rows[index], ...data, updatedAt: new Date().toISOString() });
       await writeBlobAppointments(rows);
       return rows[index];
     });
