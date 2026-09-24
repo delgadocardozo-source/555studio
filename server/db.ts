@@ -2,6 +2,7 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { get as getBlob, list as listBlobs, put as putBlob } from "@vercel/blob";
 import { appointments, Appointment, InsertAppointment, customers, Customer, InsertCustomer, InsertUser, users } from "../drizzle/schema";
+import { timeSlotsOverlap } from "../shared/scheduling";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -511,12 +512,19 @@ export async function getDashboardStats() {
   let faltaPagar = 0;
   let ingresosCobrados = 0;
   let montoPendienteCobro = 0;
+  let vehiculosPorLavar = 0;
+  let serviciosActivos = 0;
 
   for (const row of rows) {
     if (row.status === "pendiente" || row.status === "confirmado") pendientes++;
     if (row.status === "en_camino" || row.status === "en_proceso") enProceso++;
     if (row.status === "confirmado") {
       montoPendienteCobro += Number(row.servicePrice) || 0;
+    }
+    if (row.status !== "finalizado" && row.status !== "cancelado") {
+      serviciosActivos++;
+      const vehicles = parseAppointmentVehicles(row as StoredAppointment);
+      vehiculosPorLavar += Number(row.vehicleCount) > 0 ? Number(row.vehicleCount) : vehicles.length || 1;
     }
     if (row.status === "finalizado") {
       finalizados++;
@@ -538,5 +546,21 @@ export async function getDashboardStats() {
     faltaPagar,
     ingresosCobrados,
     montoPendienteCobro,
+    vehiculosPorLavar,
+    serviciosActivos,
   };
+}
+
+/** Busca turnos del mismo día que solapan el horario (excluye cancelados). */
+export async function findOverlappingAppointments(params: {
+  scheduledDate: string;
+  timeSlot: string;
+  excludeId?: number;
+}) {
+  const rows = await listAppointments({ date: params.scheduledDate });
+  return rows.filter((row) => {
+    if (params.excludeId && row.id === params.excludeId) return false;
+    if (row.status === "cancelado") return false;
+    return timeSlotsOverlap(String(row.timeSlot || ""), params.timeSlot);
+  });
 }

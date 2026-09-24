@@ -32,6 +32,20 @@ import {
   Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  SLOT_BANDS,
+  START_TIMES,
+  MINUTES_PER_VEHICLE,
+  appointmentVehicleCount,
+  buildTimeSlot,
+  durationForVehicles,
+  fitsInWorkday,
+  formatDuration,
+  getSlotStart,
+  isPendingWashStatus,
+  parseTimeSlot,
+  timeSlotOverlapsRange,
+} from "@shared/scheduling";
 
 // Zonas y opciones
 const CITIES = ["Todas", "Asuncion", "Luque", "Mariano Roque Alonso", "San Lorenzo"] as const;
@@ -53,15 +67,6 @@ const STATUS_FLOW = [
   { value: "finalizado", label: "Finalizado" },
   { value: "cancelado", label: "Cancelado" },
 ] as const;
-
-const TIME_SLOTS = [
-  "08:00 - 09:30",
-  "09:30 - 11:00",
-  "11:00 - 12:30",
-  "13:30 - 15:00",
-  "15:00 - 16:30",
-  "16:30 - 18:00",
-];
 
 interface FormVehicleItem {
   id: string;
@@ -87,7 +92,7 @@ export default function Home() {
   const [clientTypeFilter, setClientTypeFilter] = useState<string>("todos");
   const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview">("calendario");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [selectedSlot, setSelectedSlot] = useState<string>(TIME_SLOTS[0]);
+  const [selectedSlot, setSelectedSlot] = useState<string>(SLOT_BANDS[0]);
 
   // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -123,13 +128,20 @@ export default function Home() {
     locationUrl: "",
     addressReference: "",
     scheduledDate: selectedDate,
-    timeSlot: TIME_SLOTS[0],
+    timeSlot: SLOT_BANDS[0],
     notes: "",
   });
 
   const [formVehicles, setFormVehicles] = useState<FormVehicleItem[]>([
     { id: "v1", type: "auto", model: "", plate: "" },
   ]);
+
+  React.useEffect(() => {
+    setFormData((prev) => {
+      const next = buildTimeSlot(getSlotStart(prev.timeSlot), Math.max(1, formVehicles.length));
+      return next === prev.timeSlot ? prev : { ...prev, timeSlot: next };
+    });
+  }, [formVehicles.length]);
 
   const totalCalculatedPrice = useMemo(() => {
     return formVehicles.reduce((acc, curr) => acc + (curr.type === "auto" ? 90000 : 120000), 0);
@@ -168,14 +180,58 @@ export default function Home() {
 
   const { data: appointments = [], isLoading: listLoading } = trpc.appointments.list.useQuery(queryFilters);
 
-  React.useEffect(() => {
-    if (appointments.length > 0) {
-      const hasCurrent = appointments.some((a) => a.timeSlot === selectedSlot);
-      if (!hasCurrent) {
-        setSelectedSlot(appointments[0].timeSlot);
-      }
-    }
+  const { data: formDayAppointments = [] } = trpc.appointments.list.useQuery(
+    { date: formData.scheduledDate },
+    { enabled: isModalOpen }
+  );
+
+  const bandHasService = (band: string, rows: typeof appointments = appointments) => {
+    const bandRange = parseTimeSlot(band);
+    if (!bandRange) return false;
+    return rows.some(
+      (appointment) =>
+        appointment.status !== "cancelado" &&
+        timeSlotOverlapsRange(String(appointment.timeSlot || ""), bandRange.start, bandRange.end)
+    );
+  };
+
+  const appointmentsInBand = (band: string) => {
+    const bandRange = parseTimeSlot(band);
+    if (!bandRange) return [];
+    return appointments.filter(
+      (appointment) =>
+        appointment.status !== "cancelado" &&
+        timeSlotOverlapsRange(String(appointment.timeSlot || ""), bandRange.start, bandRange.end)
+    );
+  };
+
+  const findBandForTimeSlot = (timeSlot: string) => {
+    const match = SLOT_BANDS.find((band) => {
+      const bandRange = parseTimeSlot(band);
+      if (!bandRange) return false;
+      return timeSlotOverlapsRange(timeSlot, bandRange.start, bandRange.end);
+    });
+    return match || SLOT_BANDS[0];
+  };
+
+  const autosAgendadosDia = useMemo(() => {
+    return appointments
+      .filter((a) => isPendingWashStatus(a.status))
+      .reduce((sum, a) => sum + appointmentVehicleCount(a), 0);
   }, [appointments]);
+
+  const serviciosActivosDia = useMemo(() => {
+    return appointments.filter((a) => isPendingWashStatus(a.status)).length;
+  }, [appointments]);
+
+  React.useEffect(() => {
+    if (appointments.length === 0) return;
+    const stillRelevant = bandHasService(selectedSlot);
+    if (!stillRelevant) {
+      const firstBusy = SLOT_BANDS.find((band) => bandHasService(band));
+      if (firstBusy) setSelectedSlot(firstBusy);
+    }
+  }, [appointments, selectedSlot]);
 
   const anyModalOpen = isModalOpen || isFinalizeModalOpen || isDetailOpen;
   React.useEffect(() => {
@@ -189,10 +245,28 @@ export default function Home() {
   }, [anyModalOpen]);
 
   const selectedSlotAppointments = useMemo(
-    () => appointments.filter((appointment) => appointment.timeSlot === selectedSlot),
+    () => appointmentsInBand(selectedSlot),
     [appointments, selectedSlot]
   );
   const selectedSlotAppointment = selectedSlotAppointments[0] ?? null;
+
+  const formVehicleCount = Math.max(1, formVehicles.length);
+  const formStartTime = getSlotStart(formData.timeSlot);
+  const formComputedSlot = buildTimeSlot(formStartTime, formVehicleCount);
+  const formDurationLabel = formatDuration(durationForVehicles(formVehicleCount));
+
+  const isStartTimeBlocked = (start: string) => {
+    if (!fitsInWorkday(start, formVehicleCount)) return true;
+    const candidate = buildTimeSlot(start, formVehicleCount);
+    return formDayAppointments.some((row) => {
+      if (editingAppointmentId && row.id === editingAppointmentId) return false;
+      if (row.status === "cancelado") return false;
+      const candidateRange = parseTimeSlot(candidate);
+      const rowRange = parseTimeSlot(String(row.timeSlot || ""));
+      if (!candidateRange || !rowRange) return false;
+      return candidateRange.start < rowRange.end && rowRange.start < candidateRange.end;
+    });
+  };
 
   // Mutaciones
   const createMutation = trpc.appointments.create.useMutation({
@@ -210,7 +284,7 @@ export default function Home() {
         setActiveTab("calendario");
       }
       if (created?.timeSlot) {
-        setSelectedSlot(created.timeSlot);
+        setSelectedSlot(findBandForTimeSlot(created.timeSlot));
       }
       utils.appointments.invalidate();
       setIsModalOpen(false);
@@ -296,7 +370,7 @@ export default function Home() {
       locationUrl: "",
       addressReference: "",
       scheduledDate: selectedDate,
-      timeSlot: TIME_SLOTS[0],
+      timeSlot: SLOT_BANDS[0],
       notes: "",
     });
     setFormVehicles([{ id: "v1", type: "auto", model: "", plate: "" }]);
@@ -314,10 +388,11 @@ export default function Home() {
   const handleOpenCreateModal = (presetDate?: string, presetSlot?: string) => {
     setEditingAppointmentId(null);
     resetForm();
+    const start = presetSlot ? getSlotStart(presetSlot) : getSlotStart(SLOT_BANDS[0]);
     setFormData((prev) => ({
       ...prev,
       scheduledDate: presetDate || selectedDate,
-      timeSlot: presetSlot || TIME_SLOTS[0],
+      timeSlot: buildTimeSlot(start, 1),
     }));
     setIsModalOpen(true);
   };
@@ -366,7 +441,7 @@ export default function Home() {
       locationUrl: app.locationUrl || "",
       addressReference: app.addressReference || "",
       scheduledDate: app.scheduledDate || selectedDate,
-      timeSlot: app.timeSlot || TIME_SLOTS[0],
+      timeSlot: app.timeSlot || SLOT_BANDS[0],
       notes: app.notes || "",
     });
     setFormVehicles(vehicles);
@@ -407,6 +482,7 @@ export default function Home() {
 
     const payload = {
       ...formData,
+      timeSlot: formComputedSlot,
       vehicles: validVehicles.map((v) => ({
         type: v.type,
         model: v.model.trim(),
@@ -416,6 +492,18 @@ export default function Home() {
       companyName: formData.clientType !== "particular" ? formData.companyName : null,
       clientTaxId: formData.clientTaxId?.trim() || null,
     };
+
+    if (!fitsInWorkday(formStartTime, validVehicles.length)) {
+      toast.error(
+        `Con ${validVehicles.length} vehículo(s) necesitás ${formatDuration(durationForVehicles(validVehicles.length))}. Elegí un inicio más temprano (jornada hasta 18:00).`
+      );
+      return;
+    }
+
+    if (isStartTimeBlocked(formStartTime)) {
+      toast.error("Ese horario se solapa con otro turno. Cada vehículo lleva 1h 20min.");
+      return;
+    }
 
     if (editingAppointmentId) {
       updateMutation.mutate({ id: editingAppointmentId, data: payload });
@@ -766,8 +854,9 @@ export default function Home() {
       <section className="sm:hidden px-3.5 pt-2.5">
         <div className="grid grid-cols-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/90 divide-x divide-slate-800">
           <div className="px-2 py-2 min-w-0">
-            <span className="block text-[9px] uppercase font-bold text-slate-500 truncate">Agenda</span>
-            <span className="text-sm font-extrabold text-white tabular-nums">{appointments.length}</span>
+            <span className="block text-[9px] uppercase font-bold text-slate-500 truncate">Agendados</span>
+            <span className="text-sm font-extrabold text-white tabular-nums">{autosAgendadosDia}</span>
+            <span className="block text-[9px] text-slate-500 truncate">autos</span>
           </div>
           <div className="px-2 py-2 min-w-0">
             <span className="block text-[9px] uppercase font-bold text-amber-500 truncate">Pend.</span>
@@ -797,11 +886,12 @@ export default function Home() {
       <section className="hidden sm:block px-3.5 sm:px-6 max-w-7xl mx-auto w-full pt-3 pb-1">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col justify-between">
-            <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">Total Registros</span>
+            <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">Agendados</span>
             <div className="flex items-baseline justify-between mt-1">
-              <span className="text-xl sm:text-2xl font-bold font-display text-white">{stats?.total ?? 0}</span>
-              <Layers className="w-4 h-4 text-slate-500" />
+              <span className="text-xl sm:text-2xl font-bold font-display text-white">{stats?.vehiculosPorLavar ?? 0}</span>
+              <Car className="w-4 h-4 text-slate-500" />
             </div>
+            <span className="text-[10px] text-slate-500 mt-0.5">{stats?.serviciosActivos ?? 0} servicio(s) activos</span>
           </div>
 
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col justify-between">
@@ -1066,17 +1156,21 @@ export default function Home() {
         {activeTab === "calendario" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-slate-400 px-0.5">
-              <span className="hidden sm:inline">Franjas horarias del día</span>
-              <span className="sm:hidden font-semibold text-slate-300">{appointments.length} servicio(s)</span>
-              <span className="hidden sm:inline font-semibold text-slate-200">{appointments.length} servicio(s) programados</span>
+              <span className="hidden sm:inline">Franjas de 1h 20min · se bloquean según vehículos</span>
+              <span className="sm:hidden font-semibold text-slate-300">{autosAgendadosDia} auto(s) · {serviciosActivosDia} servicio(s)</span>
+              <span className="hidden sm:inline font-semibold text-slate-200">{autosAgendadosDia} auto(s) por lavar · {serviciosActivosDia} servicio(s)</span>
             </div>
 
             {/* Vista móvil: chips horizontales + una sola orden activa */}
             <div className="md:hidden space-y-3">
               <div className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory no-scrollbar -mx-3.5 px-3.5 pb-0.5">
-                {TIME_SLOTS.map((slot) => {
+                {SLOT_BANDS.map((slot) => {
                   const isSelected = selectedSlot === slot;
-                  const hasService = appointments.some((appointment) => appointment.timeSlot === slot);
+                  const hasService = bandHasService(slot);
+                  const bandCars = appointmentsInBand(slot).reduce(
+                    (sum, a) => sum + appointmentVehicleCount(a),
+                    0
+                  );
                   return (
                     <button
                       key={slot}
@@ -1092,7 +1186,7 @@ export default function Home() {
                     >
                       <span className="block text-[12px] font-extrabold leading-tight">{slot.split(" - ")[0]}</span>
                       <span className={`block text-[9px] mt-0.5 font-semibold ${isSelected ? "text-red-100" : hasService ? "text-emerald-400" : "text-slate-500"}`}>
-                        {hasService ? "Ocupado" : "Libre"}
+                        {hasService ? `${bandCars} auto(s)` : "Libre"}
                       </span>
                     </button>
                   );
@@ -1134,6 +1228,11 @@ export default function Home() {
                             <span className="font-bold truncate">{selectedSlotAppointment.vehicleModel}</span>
                             {selectedSlotAppointment.licensePlate && <span className="font-mono text-[10px] bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 shrink-0">{selectedSlotAppointment.licensePlate}</span>}
                           </div>
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            {selectedSlotAppointment.timeSlot}
+                            {" · "}
+                            {appointmentVehicleCount(selectedSlotAppointment)} vehículo(s)
+                          </p>
                         </div>
                         <div className="shrink-0">{getStatusBadge(selectedSlotAppointment.status)}</div>
                       </div>
@@ -1199,9 +1298,13 @@ export default function Home() {
 
             {/* Vista extendida para tablet y escritorio */}
             <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {TIME_SLOTS.map((slot) => {
-                const slotAppointments = appointments.filter((a) => a.timeSlot === slot);
+              {SLOT_BANDS.map((slot) => {
+                const slotAppointments = appointmentsInBand(slot);
                 const hasAppointments = slotAppointments.length > 0;
+                const bandCars = slotAppointments.reduce(
+                  (sum, a) => sum + appointmentVehicleCount(a),
+                  0
+                );
 
                 return (
                   <div
@@ -1216,6 +1319,9 @@ export default function Home() {
                       <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
                         <Clock className="w-3.5 h-3.5 text-red-400" />
                         <span>{slot}</span>
+                        {hasAppointments && (
+                          <span className="text-[10px] font-semibold text-emerald-400">· {bandCars} auto(s)</span>
+                        )}
                       </div>
                       <button
                         onClick={() => handleOpenCreateModal(selectedDate, slot)}
@@ -2100,6 +2206,9 @@ export default function Home() {
                     {totalCalculatedPrice.toLocaleString("es-PY")} Gs.
                   </span>
                 </div>
+                <p className="text-[10px] text-slate-400">
+                  Tiempo estimado: <strong className="text-slate-200">{formDurationLabel}</strong> ({formVehicleCount} × 1h 20min)
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -2162,19 +2271,33 @@ export default function Home() {
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Horario Asignado *
+                    Hora de inicio *
                   </label>
                   <select
-                    value={formData.timeSlot}
-                    onChange={(e) => setFormData({ ...formData, timeSlot: e.target.value })}
+                    value={formStartTime}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        timeSlot: buildTimeSlot(e.target.value, formVehicleCount),
+                      })
+                    }
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-red-500"
                   >
-                    {TIME_SLOTS.map((slot) => (
-                      <option key={slot} value={slot}>
-                        {slot}
-                      </option>
-                    ))}
+                    {START_TIMES.map((start) => {
+                      const blocked = isStartTimeBlocked(start);
+                      const preview = buildTimeSlot(start, formVehicleCount);
+                      return (
+                        <option key={start} value={start} disabled={blocked}>
+                          {start} → {preview.split(" - ")[1]}
+                          {blocked ? " (ocupado / no entra)" : ""}
+                        </option>
+                      );
+                    })}
                   </select>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Franja asignada: <strong className="text-slate-200">{formComputedSlot}</strong>
+                    {" · "}1 vehículo = {formatDuration(MINUTES_PER_VEHICLE)}
+                  </p>
                 </div>
               </div>
 

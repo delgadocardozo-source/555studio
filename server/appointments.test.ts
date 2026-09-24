@@ -37,6 +37,8 @@ describe("Appointments tRPC router with Payment Rules", () => {
     expect(stats).toHaveProperty("faltaPagar");
     expect(stats).toHaveProperty("ingresosCobrados");
     expect(stats).toHaveProperty("montoPendienteCobro");
+    expect(stats).toHaveProperty("vehiculosPorLavar");
+    expect(stats).toHaveProperty("serviciosActivos");
   });
 
   it("finalizes an appointment with cash declaration", async () => {

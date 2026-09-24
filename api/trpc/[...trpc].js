@@ -23,9 +23,85 @@ var decodeOAuthState = (state) => {
   return { redirectUri: decoded };
 };
 
+// shared/scheduling.ts
+var MINUTES_PER_VEHICLE = 80;
+var WORKDAY_START = "08:00";
+var WORKDAY_END = "18:00";
+var START_TIMES = (() => {
+  const starts = [];
+  const dayEnd = timeToMinutes(WORKDAY_END);
+  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += 20) {
+    starts.push(minutesToTime(m));
+  }
+  return starts;
+})();
+var SLOT_BANDS = (() => {
+  const bands = [];
+  const dayEnd = timeToMinutes(WORKDAY_END);
+  for (let m = timeToMinutes(WORKDAY_START); m + MINUTES_PER_VEHICLE <= dayEnd; m += MINUTES_PER_VEHICLE) {
+    bands.push(`${minutesToTime(m)} - ${minutesToTime(m + MINUTES_PER_VEHICLE)}`);
+  }
+  return bands;
+})();
+function timeToMinutes(time) {
+  const [h, m] = time.trim().split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+function minutesToTime(total) {
+  const clamped = Math.max(0, Math.min(total, 24 * 60 - 1));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function formatDuration(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${String(m).padStart(2, "0")}min`;
+}
+function durationForVehicles(vehicleCount) {
+  const count = Math.max(1, Math.floor(vehicleCount) || 1);
+  return count * MINUTES_PER_VEHICLE;
+}
+function buildTimeSlot(startTime, vehicleCount) {
+  const start = timeToMinutes(startTime);
+  const end = start + durationForVehicles(vehicleCount);
+  return `${minutesToTime(start)} - ${minutesToTime(end)}`;
+}
+function parseTimeSlot(timeSlot) {
+  if (!timeSlot || typeof timeSlot !== "string") return null;
+  const parts = timeSlot.split("-").map((p) => p.trim());
+  if (parts.length < 2) return null;
+  const start = timeToMinutes(parts[0]);
+  const end = timeToMinutes(parts[1]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+function getSlotStart(timeSlot) {
+  const parsed = parseTimeSlot(timeSlot);
+  if (!parsed) return timeSlot?.split("-")[0]?.trim() || WORKDAY_START;
+  return minutesToTime(parsed.start);
+}
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
+function timeSlotsOverlap(a, b) {
+  const pa = parseTimeSlot(a);
+  const pb = parseTimeSlot(b);
+  if (!pa || !pb) return a === b;
+  return rangesOverlap(pa.start, pa.end, pb.start, pb.end);
+}
+function fitsInWorkday(startTime, vehicleCount) {
+  const start = timeToMinutes(startTime);
+  const end = start + durationForVehicles(vehicleCount);
+  return start >= timeToMinutes(WORKDAY_START) && end <= timeToMinutes(WORKDAY_END);
+}
+
 // server/routers.ts
 import { z as z2 } from "zod";
 import { put as putBlob2 } from "@vercel/blob";
+import { TRPCError as TRPCError3 } from "@trpc/server";
 
 // server/_core/cookies.ts
 function isSecureRequest(req) {
@@ -356,6 +432,23 @@ var appointments = mysqlTable("appointments", {
 });
 
 // server/db.ts
+function parseAppointmentVehicles(row) {
+  if (row.vehicles) {
+    try {
+      const parsed = typeof row.vehicles === "string" ? JSON.parse(row.vehicles) : row.vehicles;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+    }
+  }
+  return [
+    {
+      type: row.vehicleType,
+      model: row.vehicleModel,
+      plate: row.licensePlate || null,
+      price: row.servicePrice
+    }
+  ];
+}
 var _db = null;
 var BLOB_APPOINTMENTS_PATH = "555-detail-agenda/data/appointments.json";
 var BLOB_CUSTOMERS_PATH = "555-detail-agenda/data/customers.json";
@@ -724,11 +817,18 @@ async function getDashboardStats() {
   let faltaPagar = 0;
   let ingresosCobrados = 0;
   let montoPendienteCobro = 0;
+  let vehiculosPorLavar = 0;
+  let serviciosActivos = 0;
   for (const row of rows) {
     if (row.status === "pendiente" || row.status === "confirmado") pendientes++;
     if (row.status === "en_camino" || row.status === "en_proceso") enProceso++;
     if (row.status === "confirmado") {
       montoPendienteCobro += Number(row.servicePrice) || 0;
+    }
+    if (row.status !== "finalizado" && row.status !== "cancelado") {
+      serviciosActivos++;
+      const vehicles = parseAppointmentVehicles(row);
+      vehiculosPorLavar += Number(row.vehicleCount) > 0 ? Number(row.vehicleCount) : vehicles.length || 1;
     }
     if (row.status === "finalizado") {
       finalizados++;
@@ -748,11 +848,44 @@ async function getDashboardStats() {
     pagados,
     faltaPagar,
     ingresosCobrados,
-    montoPendienteCobro
+    montoPendienteCobro,
+    vehiculosPorLavar,
+    serviciosActivos
   };
+}
+async function findOverlappingAppointments(params) {
+  const rows = await listAppointments({ date: params.scheduledDate });
+  return rows.filter((row) => {
+    if (params.excludeId && row.id === params.excludeId) return false;
+    if (row.status === "cancelado") return false;
+    return timeSlotsOverlap(String(row.timeSlot || ""), params.timeSlot);
+  });
 }
 
 // server/routers.ts
+async function assertScheduleAvailable(params) {
+  const start = getSlotStart(params.timeSlot);
+  const normalizedSlot = buildTimeSlot(start, params.vehicleCount);
+  if (!fitsInWorkday(start, params.vehicleCount)) {
+    throw new TRPCError3({
+      code: "BAD_REQUEST",
+      message: `El lavado de ${params.vehicleCount} veh\xEDculo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 08:00\u201318:00 partiendo de ${start}.`
+    });
+  }
+  const overlaps = await findOverlappingAppointments({
+    scheduledDate: params.scheduledDate,
+    timeSlot: normalizedSlot,
+    excludeId: params.excludeId
+  });
+  if (overlaps.length > 0) {
+    const conflict = overlaps[0];
+    throw new TRPCError3({
+      code: "CONFLICT",
+      message: `Horario ocupado: se solapa con ${conflict.clientName} (${conflict.timeSlot}). Cada veh\xEDculo requiere 1h 20min.`
+    });
+  }
+  return normalizedSlot;
+}
 var vehicleItemInputSchema = z2.object({
   type: z2.enum(["auto", "camioneta"]),
   model: z2.string().min(2, "Modelo o marca del veh\xEDculo requerido"),
@@ -821,6 +954,11 @@ var appRouter = router({
       }));
       const totalServicePrice = computedVehicles.reduce((acc, curr) => acc + curr.price, 0);
       const primary = computedVehicles[0];
+      const normalizedTimeSlot = await assertScheduleAvailable({
+        scheduledDate: input.scheduledDate,
+        timeSlot: input.timeSlot,
+        vehicleCount: computedVehicles.length
+      });
       await upsertCustomerProfile({
         clientName: input.clientName,
         clientPhone: input.clientPhone,
@@ -845,7 +983,7 @@ var appRouter = router({
         locationUrl: input.locationUrl?.trim() ? input.locationUrl.trim() : null,
         addressReference: input.addressReference ?? null,
         scheduledDate: input.scheduledDate,
-        timeSlot: input.timeSlot,
+        timeSlot: normalizedTimeSlot,
         notes: input.notes ?? null,
         status: "pendiente",
         paymentStatus: "sin_definir",
@@ -899,6 +1037,19 @@ var appRouter = router({
           payload.licensePlate = computed[0].plate;
         }
       }
+      const existing = await getAppointmentById(input.id);
+      if (!existing) {
+        throw new TRPCError3({ code: "NOT_FOUND", message: "Turno no encontrado" });
+      }
+      const nextDate = payload.scheduledDate || existing.scheduledDate;
+      const nextVehicleCount = payload.vehicleCount != null ? Number(payload.vehicleCount) : Number(existing.vehicleCount) || 1;
+      const nextSlotInput = payload.timeSlot || existing.timeSlot;
+      payload.timeSlot = await assertScheduleAvailable({
+        scheduledDate: nextDate,
+        timeSlot: nextSlotInput,
+        vehicleCount: nextVehicleCount,
+        excludeId: input.id
+      });
       if (input.data.clientPhone && input.data.clientName) {
         await upsertCustomerProfile({
           clientName: input.data.clientName,

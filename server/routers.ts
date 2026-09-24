@@ -1,11 +1,52 @@
 import { COOKIE_NAME } from "@shared/const";
+import {
+  buildTimeSlot,
+  durationForVehicles,
+  fitsInWorkday,
+  formatDuration,
+  getSlotStart,
+} from "@shared/scheduling";
 import { z } from "zod";
 import { put as putBlob } from "@vercel/blob";
+import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { storagePut } from "./storage";
 import * as db from "./db";
+
+async function assertScheduleAvailable(params: {
+  scheduledDate: string;
+  timeSlot: string;
+  vehicleCount: number;
+  excludeId?: number;
+}) {
+  const start = getSlotStart(params.timeSlot);
+  const normalizedSlot = buildTimeSlot(start, params.vehicleCount);
+
+  if (!fitsInWorkday(start, params.vehicleCount)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El lavado de ${params.vehicleCount} vehículo(s) (${formatDuration(durationForVehicles(params.vehicleCount))}) no entra en la jornada 08:00–18:00 partiendo de ${start}.`,
+    });
+  }
+
+  const overlaps = await db.findOverlappingAppointments({
+    scheduledDate: params.scheduledDate,
+    timeSlot: normalizedSlot,
+    excludeId: params.excludeId,
+  });
+
+  if (overlaps.length > 0) {
+    const conflict = overlaps[0];
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `Horario ocupado: se solapa con ${conflict.clientName} (${conflict.timeSlot}). Cada vehículo requiere 1h 20min.`,
+    });
+  }
+
+  return normalizedSlot;
+}
 
 const vehicleItemInputSchema = z.object({
   type: z.enum(["auto", "camioneta"]),
@@ -90,6 +131,11 @@ export const appRouter = router({
 
         const totalServicePrice = computedVehicles.reduce((acc, curr) => acc + curr.price, 0);
         const primary = computedVehicles[0];
+        const normalizedTimeSlot = await assertScheduleAvailable({
+          scheduledDate: input.scheduledDate,
+          timeSlot: input.timeSlot,
+          vehicleCount: computedVehicles.length,
+        });
 
         // Guarda o actualiza la ficha del cliente de forma automática para reservas recurrentes
         await db.upsertCustomerProfile({
@@ -117,7 +163,7 @@ export const appRouter = router({
           locationUrl: input.locationUrl?.trim() ? input.locationUrl.trim() : null,
           addressReference: input.addressReference ?? null,
           scheduledDate: input.scheduledDate,
-          timeSlot: input.timeSlot,
+          timeSlot: normalizedTimeSlot,
           notes: input.notes ?? null,
           status: "pendiente",
           paymentStatus: "sin_definir",
@@ -185,6 +231,25 @@ export const appRouter = router({
             payload.licensePlate = computed[0].plate;
           }
         }
+
+        const existing = await db.getAppointmentById(input.id);
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Turno no encontrado" });
+        }
+
+        const nextDate = payload.scheduledDate || existing.scheduledDate;
+        const nextVehicleCount =
+          payload.vehicleCount != null
+            ? Number(payload.vehicleCount)
+            : Number(existing.vehicleCount) || 1;
+        const nextSlotInput = payload.timeSlot || existing.timeSlot;
+        payload.timeSlot = await assertScheduleAvailable({
+          scheduledDate: nextDate,
+          timeSlot: nextSlotInput,
+          vehicleCount: nextVehicleCount,
+          excludeId: input.id,
+        });
+
         if (input.data.clientPhone && input.data.clientName) {
           await db.upsertCustomerProfile({
             clientName: input.data.clientName,
