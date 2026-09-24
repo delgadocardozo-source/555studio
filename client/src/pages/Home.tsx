@@ -585,15 +585,24 @@ export default function Home() {
   });
 
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
-  const getReceiptUrlMutation = trpc.appointments.getReceiptUrl.useMutation();
 
-  const openReceipt = async (url: string) => {
-    try {
-      const res = await getReceiptUrlMutation.mutateAsync({ url });
-      window.open(res.url, "_blank", "noopener,noreferrer");
-    } catch (err: any) {
-      toast.error(err?.message || "No se pudo abrir el comprobante");
+  /** Privados: proxy same-origin (evita Forbidden). Públicos / manus: URL directa. */
+  const openReceipt = (url: string) => {
+    if (!url) {
+      toast.error("No hay comprobante cargado");
+      return;
     }
+    const isPrivateBlob = (() => {
+      try {
+        return new URL(url).hostname.endsWith(".private.blob.vercel-storage.com");
+      } catch {
+        return false;
+      }
+    })();
+    const target = isPrivateBlob
+      ? `/api/receipt?url=${encodeURIComponent(url)}`
+      : url;
+    window.open(target, "_blank", "noopener,noreferrer");
   };
 
   const deleteMutation = trpc.appointments.delete.useMutation({
@@ -2159,12 +2168,10 @@ export default function Home() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               type="button"
-                              onClick={() => void openReceipt(finalizeData.paymentReceiptUrl!)}
-                              disabled={getReceiptUrlMutation.isPending}
-                              className="text-[11px] font-bold text-emerald-400 hover:underline px-2 py-1 rounded bg-emerald-500/10 flex items-center gap-1 disabled:opacity-50"
+                              onClick={() => openReceipt(finalizeData.paymentReceiptUrl!)}
+                              className="text-[11px] font-bold text-emerald-400 hover:underline px-2 py-1 rounded bg-emerald-500/10 flex items-center gap-1"
                             >
-                              <Eye className="w-3 h-3" />
-                              {getReceiptUrlMutation.isPending ? "Abriendo..." : "Ver"}
+                              <Eye className="w-3 h-3" /> Ver
                             </button>
                             <button
                               type="button"
@@ -2997,16 +3004,11 @@ export default function Home() {
                   <div className="pt-1">
                     <button
                       type="button"
-                      onClick={() => void openReceipt(selectedAppointment.paymentReceiptUrl!)}
-                      disabled={getReceiptUrlMutation.isPending}
-                      className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold disabled:opacity-50"
+                      onClick={() => openReceipt(selectedAppointment.paymentReceiptUrl!)}
+                      className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold"
                     >
                       <Receipt className="w-3.5 h-3.5" />
-                      <span>
-                        {getReceiptUrlMutation.isPending
-                          ? "Abriendo comprobante..."
-                          : "Ver Comprobante Digital"}
-                      </span>
+                      <span>Ver Comprobante Digital</span>
                       <ExternalLink className="w-3 h-3" />
                     </button>
                   </div>
