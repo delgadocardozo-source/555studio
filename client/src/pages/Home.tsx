@@ -29,9 +29,11 @@ import {
   SlidersHorizontal,
   RotateCcw,
   Pencil,
+  Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
+import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
 import {
   START_TIMES,
   MINUTES_PER_VEHICLE,
@@ -749,6 +751,62 @@ export default function Home() {
     window.open(`https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(confirmationText(app))}`, "_blank", "noopener,noreferrer");
   };
 
+  const dayListSource = useMemo(
+    () => (activeTab === "calendario" ? appointments : appointments.filter((a) => a.scheduledDate === selectedDate)),
+    [activeTab, appointments, selectedDate]
+  );
+
+  const handleDownloadDayList = async () => {
+    try {
+      const { doc, fileName } = await buildDayServicesFile(selectedDate, dayListSource);
+      doc.save(fileName);
+      toast.success("Lista del día descargada (PDF)");
+    } catch (error: any) {
+      toast.error(`No se pudo generar la lista: ${error?.message || "error"}`);
+    }
+  };
+
+  const handleShareDayList = async () => {
+    try {
+      const { doc, fileName, file, text } = await buildDayServicesFile(selectedDate, dayListSource);
+      const shareData = {
+        title: `Servicios ${selectedDate}`,
+        text,
+        files: [file],
+      };
+
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (error: any) {
+          if (error?.name === "AbortError") return;
+        }
+      }
+
+      // Fallback: copiar texto + descargar PDF
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore clipboard failures
+      }
+      doc.save(fileName);
+      toast.success("PDF descargado. Texto copiado: pegalo en WhatsApp para el equipo.");
+    } catch (error: any) {
+      toast.error(`No se pudo compartir la lista: ${error?.message || "error"}`);
+    }
+  };
+
+  const handleCopyDayListText = async () => {
+    try {
+      const text = buildDayServicesText(selectedDate, dayListSource);
+      await navigator.clipboard.writeText(text);
+      toast.success("Lista copiada. Pegala en WhatsApp para enviar los lavados.");
+    } catch (error: any) {
+      toast.error(`No se pudo copiar: ${error?.message || "error"}`);
+    }
+  };
+
   const parseVehicles = (app: any) => {
     if (app?.vehicles) {
       try {
@@ -970,6 +1028,16 @@ export default function Home() {
               >
                 Hoy
               </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadDayList}
+                className="sm:hidden p-1.5 rounded-lg text-slate-200 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
+                aria-label="Imprimir lista del día"
+                title="Lista del día"
+              >
+                <Printer className="w-4 h-4 text-red-400" />
+              </button>
             </div>
           )}
         </div>
@@ -1112,13 +1180,43 @@ export default function Home() {
         {/* VISTA 1: TIMELINE CONTINUO (por horario real) */}
         {activeTab === "calendario" && (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-0.5">
+            <div className="flex items-center justify-between text-xs text-slate-400 px-0.5 gap-2 flex-wrap">
               <span>
                 Jornada {WORKDAY_START}–{WORKDAY_END} · 1 auto = {formatDuration(MINUTES_PER_VEHICLE)} · inicios cada 5 min
               </span>
-              <span className="font-semibold text-slate-200">
-                {autosAgendadosDia} auto(s) por lavar · {serviciosActivosDia} servicio(s)
-              </span>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="font-semibold text-slate-200">
+                  {autosAgendadosDia} auto(s) por lavar · {serviciosActivosDia} servicio(s)
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleDownloadDayList}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
+                    title="Descargar PDF de la lista del día"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-red-400" />
+                    PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShareDayList}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20 active:scale-95"
+                    title="Compartir lista del día con el equipo"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    Enviar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyDayListText}
+                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white active:scale-95"
+                    title="Copiar texto para WhatsApp"
+                  >
+                    Copiar
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-2.5">
