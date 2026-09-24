@@ -36,6 +36,7 @@ import {
   SLOT_BANDS,
   START_TIMES,
   MINUTES_PER_VEHICLE,
+  appointmentStartsInBand,
   appointmentVehicleCount,
   buildTimeSlot,
   durationForVehicles,
@@ -195,23 +196,37 @@ export default function Home() {
     );
   };
 
-  const appointmentsInBand = (band: string) => {
-    const bandRange = parseTimeSlot(band);
-    if (!bandRange) return [];
+  /** Tarjetas: solo turnos que EMPIEZAN en la franja (evita duplicar 1 auto en varias columnas). */
+  const appointmentsStartingInBand = (band: string) => {
     return appointments.filter(
       (appointment) =>
         appointment.status !== "cancelado" &&
-        timeSlotOverlapsRange(String(appointment.timeSlot || ""), bandRange.start, bandRange.end)
+        appointmentStartsInBand(String(appointment.timeSlot || ""), band)
     );
   };
 
+  /** Continuaciones: turnos que solapan la franja pero empezaron antes. */
+  const appointmentsContinuingInBand = (band: string) => {
+    const bandRange = parseTimeSlot(band);
+    if (!bandRange) return [];
+    return appointments.filter((appointment) => {
+      if (appointment.status === "cancelado") return false;
+      const slot = String(appointment.timeSlot || "");
+      if (appointmentStartsInBand(slot, band)) return false;
+      return timeSlotOverlapsRange(slot, bandRange.start, bandRange.end);
+    });
+  };
+
   const findBandForTimeSlot = (timeSlot: string) => {
-    const match = SLOT_BANDS.find((band) => {
+    const match = SLOT_BANDS.find((band) => appointmentStartsInBand(timeSlot, band));
+    if (match) return match;
+    // Fallback: primera franja que solape (turnos legacy mal alineados)
+    const overlap = SLOT_BANDS.find((band) => {
       const bandRange = parseTimeSlot(band);
       if (!bandRange) return false;
       return timeSlotOverlapsRange(timeSlot, bandRange.start, bandRange.end);
     });
-    return match || SLOT_BANDS[0];
+    return overlap || SLOT_BANDS[0];
   };
 
   const autosAgendadosDia = useMemo(() => {
@@ -245,7 +260,11 @@ export default function Home() {
   }, [anyModalOpen]);
 
   const selectedSlotAppointments = useMemo(
-    () => appointmentsInBand(selectedSlot),
+    () => appointmentsStartingInBand(selectedSlot),
+    [appointments, selectedSlot]
+  );
+  const selectedSlotContinuations = useMemo(
+    () => appointmentsContinuingInBand(selectedSlot),
     [appointments, selectedSlot]
   );
   const selectedSlotAppointment = selectedSlotAppointments[0] ?? null;
@@ -1043,11 +1062,15 @@ export default function Home() {
               <div className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory no-scrollbar -mx-3.5 px-3.5 pb-0.5">
                 {SLOT_BANDS.map((slot) => {
                   const isSelected = selectedSlot === slot;
-                  const hasService = bandHasService(slot);
-                  const bandCars = appointmentsInBand(slot).reduce(
-                    (sum, a) => sum + appointmentVehicleCount(a),
-                    0
-                  );
+                  const starters = appointmentsStartingInBand(slot);
+                  const continuations = appointmentsContinuingInBand(slot);
+                  const hasService = starters.length > 0 || continuations.length > 0;
+                  const bandCars = starters.reduce((sum, a) => sum + appointmentVehicleCount(a), 0);
+                  const chipLabel = starters.length > 0
+                    ? `${bandCars} auto(s)`
+                    : continuations.length > 0
+                      ? "En curso"
+                      : "Libre";
                   return (
                     <button
                       key={slot}
@@ -1063,7 +1086,7 @@ export default function Home() {
                     >
                       <span className="block text-[12px] font-extrabold leading-tight">{slot.split(" - ")[0]}</span>
                       <span className={`block text-[9px] mt-0.5 font-semibold ${isSelected ? "text-red-100" : hasService ? "text-emerald-400" : "text-slate-500"}`}>
-                        {hasService ? `${bandCars} auto(s)` : "Libre"}
+                        {chipLabel}
                       </span>
                     </button>
                   );
@@ -1163,6 +1186,27 @@ export default function Home() {
                       {getPaymentBadge(selectedSlotAppointment.paymentStatus, selectedSlotAppointment.paymentMethod)}
                     </div>
                   </div>
+                ) : selectedSlotContinuations.length > 0 ? (
+                  <div className="px-4 py-5 space-y-2">
+                    <p className="text-xs font-bold text-amber-300/90 text-center">Servicio en curso</p>
+                    {selectedSlotContinuations.map((app) => (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedAppointment(app);
+                          setIsDetailOpen(true);
+                        }}
+                        className="w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-left"
+                      >
+                        <span className="block text-[10px] font-mono text-slate-500">{app.code}</span>
+                        <span className="block text-sm font-bold text-white truncate">{app.clientName}</span>
+                        <span className="block text-[11px] text-slate-400 mt-0.5">
+                          Continúa · {app.timeSlot}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 ) : (
                   <div className="px-4 py-6 text-center">
                     <Clock className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
@@ -1176,8 +1220,10 @@ export default function Home() {
             {/* Vista extendida para tablet y escritorio */}
             <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-3">
               {SLOT_BANDS.map((slot) => {
-                const slotAppointments = appointmentsInBand(slot);
+                const slotAppointments = appointmentsStartingInBand(slot);
+                const continuations = appointmentsContinuingInBand(slot);
                 const hasAppointments = slotAppointments.length > 0;
+                const hasActivity = hasAppointments || continuations.length > 0;
                 const bandCars = slotAppointments.reduce(
                   (sum, a) => sum + appointmentVehicleCount(a),
                   0
@@ -1187,7 +1233,7 @@ export default function Home() {
                   <div
                     key={slot}
                     className={`rounded-2xl border p-3.5 sm:p-4 transition-all ${
-                      hasAppointments
+                      hasActivity
                         ? "bg-slate-900/90 border-slate-700 shadow-lg"
                         : "bg-slate-950/40 border-slate-800/80"
                     }`}
@@ -1198,6 +1244,9 @@ export default function Home() {
                         <span>{slot}</span>
                         {hasAppointments && (
                           <span className="text-[10px] font-semibold text-emerald-400">· {bandCars} auto(s)</span>
+                        )}
+                        {!hasAppointments && continuations.length > 0 && (
+                          <span className="text-[10px] font-semibold text-amber-400">· en curso</span>
                         )}
                       </div>
                       <button
@@ -1304,6 +1353,26 @@ export default function Home() {
                               </span>
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    ) : continuations.length > 0 ? (
+                      <div className="space-y-2">
+                        {continuations.map((app) => (
+                          <button
+                            key={app.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAppointment(app);
+                              setIsDetailOpen(true);
+                            }}
+                            className="w-full text-left rounded-xl border border-slate-700/80 bg-slate-950/50 px-3 py-2.5 hover:border-amber-500/50"
+                          >
+                            <span className="text-[10px] font-mono text-slate-500 block">{app.code}</span>
+                            <span className="text-sm font-bold text-white truncate block">{app.clientName}</span>
+                            <span className="text-[11px] text-amber-300/90 mt-0.5 block">
+                              Continúa · {app.timeSlot}
+                            </span>
+                          </button>
                         ))}
                       </div>
                     ) : (

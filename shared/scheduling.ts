@@ -88,6 +88,14 @@ export function timeSlotOverlapsRange(timeSlot: string, rangeStart: number, rang
   return rangesOverlap(parsed.start, parsed.end, rangeStart, rangeEnd);
 }
 
+/** True si el inicio del turno cae dentro de la franja (no solo solapa). */
+export function appointmentStartsInBand(timeSlot: string, band: string): boolean {
+  const parsed = parseTimeSlot(timeSlot);
+  const bandRange = parseTimeSlot(band);
+  if (!parsed || !bandRange) return false;
+  return parsed.start >= bandRange.start && parsed.start < bandRange.end;
+}
+
 export function timeSlotsOverlap(a: string, b: string): boolean {
   const pa = parseTimeSlot(a);
   const pb = parseTimeSlot(b);
