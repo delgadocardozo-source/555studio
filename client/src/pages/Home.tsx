@@ -2515,7 +2515,8 @@ export default function Home() {
                     <input
                       type="number"
                       min={1}
-                      step={1000}
+                      step={1}
+                      inputMode="numeric"
                       value={formServicePrice}
                       onChange={(e) => {
                         const next = Number(e.target.value);
