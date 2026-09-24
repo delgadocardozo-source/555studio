@@ -826,7 +826,7 @@ export default function Home() {
           </div>
 
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col justify-between">
-            <span className="text-[10px] sm:text-xs font-bold text-rose-400 uppercase tracking-wider">Falta Pagar</span>
+            <span className="text-[10px] sm:text-xs font-bold text-rose-400 uppercase tracking-wider">A Cobrar</span>
             <div className="flex items-baseline justify-between mt-1">
               <span className="text-lg sm:text-xl font-bold font-display text-rose-300 truncate">
                 {(stats?.montoPendienteCobro ?? 0).toLocaleString("es-PY")} Gs.

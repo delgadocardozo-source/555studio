@@ -515,6 +515,9 @@ export async function getDashboardStats() {
   for (const row of rows) {
     if (row.status === "pendiente" || row.status === "confirmado") pendientes++;
     if (row.status === "en_camino" || row.status === "en_proceso") enProceso++;
+    if (row.status === "confirmado") {
+      montoPendienteCobro += Number(row.servicePrice) || 0;
+    }
     if (row.status === "finalizado") {
       finalizados++;
       if (row.paymentStatus === "pagado") {
@@ -522,7 +525,6 @@ export async function getDashboardStats() {
         ingresosCobrados += Number(row.servicePrice) || 0;
       } else if (row.paymentStatus === "falta_pagar") {
         faltaPagar++;
-        montoPendienteCobro += Number(row.servicePrice) || 0;
       }
     }
   }
