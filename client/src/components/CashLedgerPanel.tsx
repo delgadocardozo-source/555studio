@@ -5,6 +5,8 @@ import {
   Filter,
   Pencil,
   Plus,
+  Printer,
+  Share2,
   Trash2,
   Wallet,
   X,
@@ -19,6 +21,7 @@ import {
   type CashMovement,
   type CashMovementType,
 } from "@shared/cashLedger";
+import { buildCashLedgerFile, buildCashLedgerText } from "@/lib/cashLedgerPdf";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -168,6 +171,56 @@ export function CashLedgerPanel() {
     (dateTo ? 1 : 0) +
     (search ? 1 : 0);
 
+  const handleDownloadPdf = async () => {
+    try {
+      const { doc, fileName } = await buildCashLedgerFile(movements, filters);
+      doc.save(fileName);
+      toast.success("Caja descargada (PDF)");
+    } catch (error: any) {
+      toast.error(`No se pudo generar el PDF: ${error?.message || "error"}`);
+    }
+  };
+
+  const handleSharePdf = async () => {
+    try {
+      const { doc, fileName, file, text } = await buildCashLedgerFile(movements, filters);
+      const shareData = {
+        title: "Ingresos y Egresos · 555",
+        text,
+        files: [file],
+      };
+
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (error: any) {
+          if (error?.name === "AbortError") return;
+        }
+      }
+
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore
+      }
+      doc.save(fileName);
+      toast.success("PDF descargado. Texto copiado para WhatsApp.");
+    } catch (error: any) {
+      toast.error(`No se pudo compartir: ${error?.message || "error"}`);
+    }
+  };
+
+  const handleCopyText = async () => {
+    try {
+      const text = buildCashLedgerText(movements, filters);
+      await navigator.clipboard.writeText(text);
+      toast.success("Resumen de caja copiado");
+    } catch (error: any) {
+      toast.error(`No se pudo copiar: ${error?.message || "error"}`);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -180,7 +233,36 @@ export function CashLedgerPanel() {
             Caja operativa aparte del agendamiento. Filtrá por persona para ver sus compras.
           </p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={isLoading}
+            className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-2 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95 disabled:opacity-50"
+            title="Descargar PDF de la caja (filtro actual)"
+          >
+            <Printer className="w-3.5 h-3.5 text-red-400" />
+            PDF
+          </button>
+          <button
+            type="button"
+            onClick={handleSharePdf}
+            disabled={isLoading}
+            className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-2 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20 active:scale-95 disabled:opacity-50"
+            title="Compartir PDF / WhatsApp"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            Enviar
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyText}
+            disabled={isLoading}
+            className="hidden sm:inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-2 text-[11px] font-bold text-slate-300 hover:text-white active:scale-95 disabled:opacity-50"
+            title="Copiar texto para WhatsApp"
+          >
+            Copiar
+          </button>
           <button
             type="button"
             onClick={() => openCreate("ingreso")}

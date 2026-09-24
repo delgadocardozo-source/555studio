@@ -1320,7 +1320,7 @@ export default function Home() {
               }`}
             >
               <Wallet className="w-3.5 h-3.5 shrink-0" />
-              <span>Caja</span>
+              <span>Ingresos / Egresos</span>
             </button>
             <button
               onClick={() => setActiveTab("portal_preview")}
@@ -2168,7 +2168,7 @@ export default function Home() {
           }`}
         >
           <Wallet className="w-4 h-4 mb-0.5" />
-          <span>Caja</span>
+          <span>Caja I/E</span>
         </button>
 
         <button
