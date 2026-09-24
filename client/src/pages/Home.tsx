@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useRef } from "react";
 import { trpc } from "@/lib/trpc";
-import { jsPDF } from "jspdf";
 import {
   Calendar as CalendarIcon,
   Plus,
@@ -32,6 +31,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
+import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import {
   SLOT_BANDS,
   START_TIMES,
@@ -626,164 +626,41 @@ export default function Home() {
     }
   };
 
-  const formatGs = (amount: number) => `${Number(amount || 0).toLocaleString("es-PY")} Gs.`;
+  const confirmationText = (app: any) => buildConfirmationText(app);
 
-  const confirmationText = (app: any) => {
-    const vehicles = parseVehicles(app);
-    const vehicleLines = vehicles
-      .map((vehicle: any) => `• ${vehicle.model}${vehicle.plate ? ` (${vehicle.plate})` : ""}`)
-      .join("\n");
-
-    return [
-      "555 DETAIL STUDIO",
-      "Confirmación de servicio a domicilio",
-      "",
-      `Código: ${app.code}`,
-      `Cliente: ${app.clientName}`,
-      app.clientTaxId ? `RUC / Facturación: ${app.clientTaxId}` : null,
-      `Fecha: ${app.scheduledDate} · ${app.timeSlot}`,
-      `Zona: ${app.cityZone}`,
-      "",
-      `Vehículos (${vehicles.length}):`,
-      vehicleLines,
-      "",
-      `Total estimado: ${formatGs(app.servicePrice)}`,
-      "",
-      "Gracias por elegir 555 Detail Studio.",
-    ].filter(Boolean).join("\n");
-  };
-
-  const createConfirmationPdf = (app: any) => {
-    const doc = new jsPDF({ unit: "mm", format: "a5" });
-    const vehicles = parseVehicles(app);
-    const total = formatGs(app.servicePrice);
-
-    doc.setFillColor(5, 8, 17);
-    doc.rect(0, 0, 148, 210, "F");
-    doc.setFillColor(220, 38, 38);
-    doc.rect(0, 0, 148, 14, "F");
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("555 DETAIL STUDIO", 12, 10);
-    doc.setFontSize(7);
-    doc.setFont("helvetica", "normal");
-    doc.text("LAVADO A DOMICILIO", 102, 9.5);
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(15);
-    doc.text("Confirmación de servicio", 12, 28);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(180, 190, 205);
-    doc.setFontSize(8);
-    doc.text("Guardá este comprobante para tu registro.", 12, 34);
-
-    doc.setFillColor(15, 23, 42);
-    doc.roundedRect(12, 41, 124, 25, 3, 3, "F");
-    doc.setTextColor(180, 190, 205);
-    doc.setFontSize(7);
-    doc.text("CÓDIGO DE PEDIDO", 18, 49);
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text(app.code, 18, 58);
-    doc.setTextColor(220, 38, 38);
-    doc.setFontSize(9);
-    doc.text(`TOTAL · ${total}`, 88, 56);
-
-    let y = 78;
-    const addField = (label: string, value: string) => {
-      doc.setTextColor(148, 163, 184);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.text(label.toUpperCase(), 12, y);
-      doc.setTextColor(241, 245, 249);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text(value, 12, y + 6);
-      y += 18;
-    };
-
-    addField("Cliente", app.clientName);
-    if (app.clientTaxId) {
-      addField("RUC / Facturación", app.clientTaxId);
+  const handleDownloadConfirmation = async (app: any) => {
+    try {
+      const { doc, fileName } = await buildConfirmationFile(app);
+      doc.save(fileName);
+      toast.success("PDF de confirmación descargado");
+    } catch (error: any) {
+      toast.error(`No se pudo generar el PDF: ${error?.message || "error"}`);
     }
-    addField("Fecha y horario", `${app.scheduledDate} · ${app.timeSlot}`);
-    addField("Zona de servicio", app.cityZone);
-
-    doc.setTextColor(148, 163, 184);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.text(`VEHÍCULOS INCLUIDOS (${vehicles.length})`, 12, y);
-    y += 6;
-
-    vehicles.forEach((vehicle: any) => {
-      doc.setFillColor(15, 23, 42);
-      doc.roundedRect(12, y, 124, 12, 2, 2, "F");
-      doc.setTextColor(241, 245, 249);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.text(vehicle.model, 17, y + 7.5);
-      doc.setTextColor(148, 163, 184);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.text(`${vehicle.type === "auto" ? "Auto" : "Camioneta"}${vehicle.plate ? ` · ${vehicle.plate}` : ""}`, 82, y + 7.5);
-      y += 15;
-    });
-
-    doc.setFillColor(220, 38, 38);
-    doc.roundedRect(12, y + 4, 124, 16, 3, 3, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text("TOTAL ESTIMADO", 18, y + 11);
-    doc.setFontSize(12);
-    doc.text(total, 100, y + 14);
-
-    doc.setTextColor(148, 163, 184);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text("Asunción · Luque · Mariano Roque Alonso · San Lorenzo", 12, 196);
-    doc.text("Gracias por elegir 555 Detail Studio.", 12, 202);
-
-    return doc;
-  };
-
-  const getConfirmationFile = (app: any) => {
-    const doc = createConfirmationPdf(app);
-    const safeCode = String(app.code || "pedido").replace(/[^a-zA-Z0-9-_]/g, "_");
-    const fileName = `confirmacion-${safeCode}.pdf`;
-    const blob = doc.output("blob");
-    return { doc, fileName, file: new File([blob], fileName, { type: "application/pdf" }) };
-  };
-
-  const handleDownloadConfirmation = (app: any) => {
-    const { doc, fileName } = getConfirmationFile(app);
-    doc.save(fileName);
-    toast.success("PDF de confirmación descargado");
   };
 
   const handleShareConfirmation = async (app: any) => {
-    const { doc, fileName, file } = getConfirmationFile(app);
-    const shareData = {
-      title: `Confirmación ${app.code}`,
-      text: confirmationText(app),
-      files: [file],
-    };
+    try {
+      const { doc, fileName, file } = await buildConfirmationFile(app);
+      const shareData = {
+        title: `Confirmación ${app.code}`,
+        text: confirmationText(app),
+        files: [file],
+      };
 
-    if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch (error: any) {
-        if (error?.name === "AbortError") return;
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (error: any) {
+          if (error?.name === "AbortError") return;
+        }
       }
-    }
 
-    doc.save(fileName);
-    toast.success("PDF descargado. Adjuntalo desde WhatsApp para enviarlo al cliente.");
+      doc.save(fileName);
+      toast.success("PDF descargado. Adjuntalo desde WhatsApp para enviarlo al cliente.");
+    } catch (error: any) {
+      toast.error(`No se pudo generar el PDF: ${error?.message || "error"}`);
+    }
   };
 
   const handleWhatsAppConfirmation = (app: any) => {
@@ -819,7 +696,7 @@ export default function Home() {
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="bg-white px-2 py-1 rounded shadow-sm flex items-center justify-center shrink-0">
               <img
-                src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663609949536/xHsmAXPzWPgOgCNL.png"
+                src="/logo-555.png"
                 alt="555 Detail Studio"
                 className="h-5 sm:h-7 w-auto object-contain"
               />
