@@ -315,14 +315,42 @@ export default function Home() {
   });
 
   const updateStatusMutation = trpc.appointments.updateStatus.useMutation({
-    onSuccess: (updated) => {
+    onMutate: async ({ id, status }) => {
+      // UI inmediata: el badge y botones no esperan al Blob
+      await utils.appointments.list.cancel();
+      await utils.appointments.stats.cancel();
+
+      const previousSelected = selectedAppointment;
+      if (selectedAppointment?.id === id) {
+        setSelectedAppointment({ ...selectedAppointment, status });
+      }
+
+      utils.appointments.list.setData(queryFilters as any, (old) => {
+        if (!old) return old;
+        return old.map((row: any) => (row.id === id ? { ...row, status } : row));
+      });
+
+      return { previousSelected };
+    },
+    onSuccess: async (updated) => {
       toast.success("Estado actualizado");
       if (updated) {
         setSelectedAppointment(updated);
+        utils.appointments.list.setData(queryFilters as any, (old) => {
+          if (!old) return old;
+          return old.map((row: any) => (row.id === updated.id ? { ...row, ...updated } : row));
+        });
       }
-      utils.appointments.invalidate();
+      await Promise.all([
+        utils.appointments.list.invalidate(),
+        utils.appointments.stats.invalidate(),
+      ]);
     },
-    onError: (err) => {
+    onError: (err, _vars, context) => {
+      if (context?.previousSelected) {
+        setSelectedAppointment(context.previousSelected);
+      }
+      utils.appointments.list.invalidate();
       toast.error(err.message || "No se pudo cambiar el estado");
     },
   });

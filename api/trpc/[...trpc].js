@@ -326,7 +326,7 @@ async function storagePut(relKey, data, contentType = "application/octet-stream"
 // server/db.ts
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { get as getBlob, list as listBlobs, put as putBlob } from "@vercel/blob";
+import { get as getBlob, put as putBlob } from "@vercel/blob";
 
 // drizzle/schema.ts
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
@@ -456,11 +456,8 @@ function isVercelBlobRuntime() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 async function readBlobAppointments() {
-  const { blobs } = await listBlobs({ prefix: BLOB_APPOINTMENTS_PATH, limit: 10 });
-  const activeBlob = blobs.find((blob) => blob.pathname === BLOB_APPOINTMENTS_PATH) ?? blobs[0];
-  if (!activeBlob) return [];
-  const result = await getBlob(activeBlob.url, { access: "private" });
-  if (!result) return [];
+  const result = await getBlob(BLOB_APPOINTMENTS_PATH, { access: "private", useCache: false });
+  if (!result || !result.stream) return [];
   try {
     const text2 = await new Response(result.stream).text();
     return JSON.parse(text2);
@@ -481,6 +478,15 @@ async function putJsonBlob(pathname, rows) {
 async function writeBlobAppointments(rows) {
   await putJsonBlob(BLOB_APPOINTMENTS_PATH, rows);
 }
+var appointmentsWriteChain = Promise.resolve();
+function withAppointmentsLock(fn) {
+  const run = appointmentsWriteChain.then(fn, fn);
+  appointmentsWriteChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 function normalizePhoneKey(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -488,11 +494,8 @@ function normalizePhoneKey(phone) {
   return withoutZero.startsWith("595") ? withoutZero : `595${withoutZero}`;
 }
 async function readBlobCustomers() {
-  const { blobs } = await listBlobs({ prefix: BLOB_CUSTOMERS_PATH, limit: 10 });
-  const activeBlob = blobs.find((blob) => blob.pathname === BLOB_CUSTOMERS_PATH) ?? blobs[0];
-  if (!activeBlob) return [];
-  const result = await getBlob(activeBlob.url, { access: "private" });
-  if (!result) return [];
+  const result = await getBlob(BLOB_CUSTOMERS_PATH, { access: "private", useCache: false });
+  if (!result || !result.stream) return [];
   try {
     const text2 = await new Response(result.stream).text();
     return JSON.parse(text2);
@@ -723,17 +726,19 @@ async function createAppointment(data) {
   const cleanDate = data.scheduledDate.replace(/-/g, "");
   const code = `555-${cleanDate}-${randomSuffix}`;
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    const created2 = {
-      ...data,
-      id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
-      code,
-      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    rows.push(created2);
-    await writeBlobAppointments(rows);
-    return created2;
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      const created2 = {
+        ...data,
+        id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
+        code,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      rows.push(created2);
+      await writeBlobAppointments(rows);
+      return created2;
+    });
   }
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
@@ -743,12 +748,14 @@ async function createAppointment(data) {
 }
 async function updateAppointmentStatus(id, status) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    const index = rows.findIndex((row) => row.id === id);
-    if (index < 0) throw new Error("Turno no encontrado");
-    rows[index] = { ...rows[index], status, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    await writeBlobAppointments(rows);
-    return rows[index];
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) throw new Error("Turno no encontrado");
+      rows[index] = { ...rows[index], status, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      await writeBlobAppointments(rows);
+      return rows[index];
+    });
   }
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
@@ -771,12 +778,14 @@ async function finalizeAppointmentWithPayment(params) {
     paymentDeclaredAt: /* @__PURE__ */ new Date()
   };
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    const index = rows.findIndex((row) => row.id === params.id);
-    if (index < 0) throw new Error("Turno no encontrado");
-    rows[index] = { ...rows[index], ...payload, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    await writeBlobAppointments(rows);
-    return rows[index];
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      const index = rows.findIndex((row) => row.id === params.id);
+      if (index < 0) throw new Error("Turno no encontrado");
+      rows[index] = { ...rows[index], ...payload, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      await writeBlobAppointments(rows);
+      return rows[index];
+    });
   }
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
@@ -785,12 +794,14 @@ async function finalizeAppointmentWithPayment(params) {
 }
 async function updateAppointmentDetails(id, data) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    const index = rows.findIndex((row) => row.id === id);
-    if (index < 0) throw new Error("Turno no encontrado");
-    rows[index] = { ...rows[index], ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    await writeBlobAppointments(rows);
-    return rows[index];
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) throw new Error("Turno no encontrado");
+      rows[index] = { ...rows[index], ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      await writeBlobAppointments(rows);
+      return rows[index];
+    });
   }
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
@@ -799,9 +810,11 @@ async function updateAppointmentDetails(id, data) {
 }
 async function deleteAppointment(id) {
   if (isVercelBlobRuntime()) {
-    const rows = await readBlobAppointments();
-    await writeBlobAppointments(rows.filter((row) => row.id !== id));
-    return { success: true };
+    return withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      await writeBlobAppointments(rows.filter((row) => row.id !== id));
+      return { success: true };
+    });
   }
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
