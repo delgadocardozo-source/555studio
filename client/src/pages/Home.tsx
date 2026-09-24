@@ -239,30 +239,47 @@ export default function Home() {
     return availableStartTimes(appointmentVehicleCount(movingAppointment), occupied);
   }, [movingAppointment, dayAppointmentsSorted]);
 
-  /** Huecos reales donde cabe el turno (lo que el usuario espera ver: mañana / tarde). */
+  /** Huecos reales donde cabe el turno + inicios extremos (primero / último del hueco). */
   const moveFreeWindows = useMemo(() => {
     if (!movingAppointment) return [];
     return dayFreeGaps
       .map((gap) => {
-        const start = earliestStartInGap(gap, movingVehicleCount);
-        if (!start) return null;
+        const startsInGap = moveAvailableStarts.filter((start) => {
+          const m = timeToMinutes(start);
+          return m >= gap.start && m < gap.end;
+        });
+        if (startsInGap.length === 0) return null;
+        const first = startsInGap[0];
+        const last = startsInGap[startsInGap.length - 1];
         return {
           key: `win-${gap.start}-${gap.end}`,
           gapStart: gap.start,
           gapEnd: gap.end,
-          start,
-          slot: buildTimeSlot(start, movingVehicleCount),
+          start: first,
+          lastStart: last,
+          slot: buildTimeSlot(first, movingVehicleCount),
+          lastSlot: buildTimeSlot(last, movingVehicleCount),
+          starts: startsInGap,
         };
       })
       .filter((w): w is NonNullable<typeof w> => w != null);
-  }, [dayFreeGaps, movingAppointment, movingVehicleCount]);
+  }, [dayFreeGaps, movingAppointment, movingVehicleCount, moveAvailableStarts]);
+
+  const moveLastStartOption = useMemo(() => {
+    if (!moveAvailableStarts.includes(WORKDAY_LAST_START)) return null;
+    return {
+      start: WORKDAY_LAST_START,
+      slot: buildTimeSlot(WORKDAY_LAST_START, movingVehicleCount),
+    };
+  }, [moveAvailableStarts, movingVehicleCount]);
 
   const moveStartsGrouped = useMemo(() => {
     const current = movingAppointment
       ? getSlotStart(String(movingAppointment.timeSlot || ""))
       : "";
-    const preferred = new Set(moveFreeWindows.map((w) => w.start));
+    const preferred = new Set(moveFreeWindows.flatMap((w) => [w.start, w.lastStart]));
     if (current) preferred.add(current);
+    preferred.add(WORKDAY_LAST_START);
 
     const filtered = moveAvailableStarts.filter((start) => {
       if (moveShowAllStarts) return true;
@@ -2600,7 +2617,7 @@ export default function Home() {
             onClick={closeMoveSheet}
           />
           <div className="relative w-full sm:max-w-md max-h-[85dvh] overflow-hidden rounded-t-3xl sm:rounded-3xl border border-slate-700 bg-slate-950 shadow-2xl flex flex-col">
-            <div className="px-4 pt-4 pb-3 border-b border-slate-800">
+            <div className="px-4 pt-4 pb-3 border-b border-slate-800 shrink-0">
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-700 sm:hidden" />
               <h3 className="text-base font-extrabold text-white">Mover horario</h3>
               <p className="text-xs text-slate-400 mt-1">
@@ -2614,46 +2631,88 @@ export default function Home() {
                 Ahora: {buildTimeSlot(getSlotStart(String(movingAppointment.timeSlot || "")), movingVehicleCount)}
               </p>
               <p className="text-[11px] text-amber-200/90 mt-2">
-                Solo aparecen huecos donde entra el lavado completo. Un hueco de 40 min (ej. 12:00–12:40) no alcanza.
+                Último inicio del día: <strong className="text-amber-100">{WORKDAY_LAST_START}</strong> (puede terminar después).
+                Deslizá para ver más horarios.
               </p>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4 overscroll-contain">
               {moveFreeWindows.length === 0 && moveAvailableStarts.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-8">
                   No hay otro horario libre hoy para esta duración.
                 </p>
               ) : (
                 <>
+                  {moveLastStartOption && (
+                    <button
+                      type="button"
+                      disabled={
+                        rescheduleMutation.isPending ||
+                        getSlotStart(String(movingAppointment.timeSlot || "")) === moveLastStartOption.start
+                      }
+                      onClick={() =>
+                        handleRescheduleToStart(movingAppointment, moveLastStartOption.start)
+                      }
+                      className="w-full rounded-2xl border border-red-500/50 bg-red-600/20 px-3 py-3.5 text-left active:scale-[0.99] touch-manipulation"
+                    >
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-red-300">
+                        Último trabajo del día
+                      </span>
+                      <span className="block text-base font-extrabold text-white mt-0.5">
+                        Empezar {moveLastStartOption.start} → {moveLastStartOption.slot.split(" - ")[1]}
+                      </span>
+                    </button>
+                  )}
+
                   {moveFreeWindows.length > 0 && (
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 mb-2">
-                        Huecos libres (recomendado)
+                        Huecos libres
                       </p>
                       <div className="space-y-2">
                         {moveFreeWindows.map((win) => {
-                          const current =
-                            getSlotStart(String(movingAppointment.timeSlot || "")) === win.start;
+                          const currentStart = getSlotStart(String(movingAppointment.timeSlot || ""));
+                          const options = Array.from(new Set([win.start, win.lastStart]));
                           return (
-                            <button
+                            <div
                               key={win.key}
-                              type="button"
-                              disabled={rescheduleMutation.isPending || current}
-                              onClick={() => handleRescheduleToStart(movingAppointment, win.start)}
-                              className={`w-full rounded-2xl border px-3 py-3 text-left active:scale-[0.99] touch-manipulation ${
-                                current
-                                  ? "border-slate-700 bg-slate-900 text-slate-500"
-                                  : "border-emerald-500/50 bg-emerald-500/15 text-white"
-                              }`}
+                              className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 space-y-2"
                             >
-                              <span className="block text-sm font-extrabold">
-                                Empezar {win.start} → {win.slot.split(" - ")[1]}
-                              </span>
-                              <span className="block text-[11px] text-slate-400 mt-0.5">
-                                Hueco disponible {minutesToTime(win.gapStart)} – {minutesToTime(win.gapEnd)}
-                                {timeToMinutes(win.start) >= 12 * 60 ? " · tarde" : " · mañana"}
-                              </span>
-                            </button>
+                              <p className="text-[11px] text-slate-300">
+                                Libre desde {minutesToTime(win.gapStart)}
+                                {win.starts.length > 1
+                                  ? ` · ${win.starts.length} inicios posibles`
+                                  : ""}
+                              </p>
+                              <div className="grid grid-cols-2 gap-2">
+                                {options.map((start) => {
+                                  const slot = buildTimeSlot(start, movingVehicleCount);
+                                  const current = currentStart === start;
+                                  const isLast = start === WORKDAY_LAST_START;
+                                  return (
+                                    <button
+                                      key={`${win.key}-${start}`}
+                                      type="button"
+                                      disabled={rescheduleMutation.isPending || current}
+                                      onClick={() => handleRescheduleToStart(movingAppointment, start)}
+                                      className={`rounded-xl border px-2 py-2.5 text-center active:scale-95 touch-manipulation ${
+                                        current
+                                          ? "border-slate-700 bg-slate-900 text-slate-500"
+                                          : isLast
+                                            ? "border-red-500/40 bg-red-600/15 text-white"
+                                            : "border-emerald-500/40 bg-emerald-500/15 text-white"
+                                      }`}
+                                    >
+                                      <span className="block text-sm font-extrabold">{start}</span>
+                                      <span className="block text-[10px] text-slate-400 mt-0.5">
+                                        → {slot.split(" - ")[1]}
+                                        {isLast ? " · últ." : ""}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           );
                         })}
                       </div>
@@ -2667,13 +2726,14 @@ export default function Home() {
                     return (
                       <div key={period}>
                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">
-                          {period === "morning" ? "Mañana (detalle)" : "Tarde (detalle)"}
+                          {period === "morning" ? "Mañana" : "Tarde / noche (inicios)"}
                         </p>
                         <div className="grid grid-cols-3 gap-2">
                           {starts.map((start) => {
                             const slot = buildTimeSlot(start, movingVehicleCount);
                             const current =
                               getSlotStart(String(movingAppointment.timeSlot || "")) === start;
+                            const isLast = start === WORKDAY_LAST_START;
                             return (
                               <button
                                 key={start}
@@ -2683,7 +2743,9 @@ export default function Home() {
                                 className={`rounded-xl border px-2 py-3 text-center active:scale-95 touch-manipulation ${
                                   current
                                     ? "border-slate-700 bg-slate-900 text-slate-500"
-                                    : "border-slate-600 bg-slate-900 text-slate-100 hover:border-emerald-500/50"
+                                    : isLast
+                                      ? "border-red-500/50 bg-red-600/20 text-white"
+                                      : "border-slate-600 bg-slate-900 text-slate-100 hover:border-emerald-500/50"
                                 }`}
                               >
                                 <span className="block text-sm font-extrabold">{start}</span>
@@ -2698,7 +2760,7 @@ export default function Home() {
                     );
                   })}
 
-                  {moveBlockers.length > 0 && (
+                  {moveBlockers.length > 0 && moveAvailableStarts.every((s) => timeToMinutes(s) < 12 * 60) && (
                     <div className="rounded-2xl border border-slate-700 bg-slate-900/80 px-3 py-2.5 space-y-1.5">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-rose-300">
                         Por qué no hay hueco más tarde
@@ -2712,22 +2774,11 @@ export default function Home() {
                           {b.cars} auto(s) = {formatDuration(durationForVehicles(b.cars))}
                         </p>
                       ))}
-                      <p className="text-[10px] text-slate-500 pt-1">
-                        Para liberar la tarde, primero mové o acortá el turno que la ocupa (ej. un
-                        servicio de 3 autos ocupa 4h).
-                      </p>
                     </div>
                   )}
 
-                  {moveStartsGrouped.afternoon.length === 0 &&
-                    moveFreeWindows.every((w) => timeToMinutes(w.start) < 12 * 60) && (
-                      <p className="text-[11px] text-slate-500 text-center">
-                        No hay hueco libre en la tarde para{" "}
-                        {formatDuration(durationForVehicles(movingVehicleCount))}.
-                      </p>
-                    )}
-
-                  {moveStartsGrouped.totalRaw > moveStartsGrouped.morning.length + moveStartsGrouped.afternoon.length && (
+                  {moveStartsGrouped.totalRaw >
+                    moveStartsGrouped.morning.length + moveStartsGrouped.afternoon.length && (
                     <button
                       type="button"
                       onClick={() => setMoveShowAllStarts((v) => !v)}
@@ -2742,7 +2793,7 @@ export default function Home() {
               )}
             </div>
 
-            <div className="px-4 py-3 border-t border-slate-800 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div className="px-4 py-3 border-t border-slate-800 pb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0">
               <button
                 type="button"
                 onClick={closeMoveSheet}
