@@ -2,6 +2,7 @@ import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "./routers";
 import { createContext } from "./_core/context";
+import { registerReceiptProxy } from "./receiptProxy";
 
 /**
  * Single bundled entrypoint for Vercel Serverless Functions.
@@ -10,6 +11,7 @@ import { createContext } from "./_core/context";
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
+registerReceiptProxy(app);
 app.use(
   "/api/trpc",
   createExpressMiddleware({
