@@ -762,22 +762,35 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Resumen Mobile: una sola franja para conservar la agenda completa visible */}
+      {/* Resumen Mobile */}
       <section className="sm:hidden px-3.5 pt-2.5">
-        <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/90 divide-x divide-slate-800">
-          <div className="px-3 py-2">
-            <span className="block text-[9px] uppercase font-bold text-slate-500">Agenda</span>
-            <span className="text-base font-extrabold text-white">{appointments.length}</span>
+        <div className="grid grid-cols-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/90 divide-x divide-slate-800">
+          <div className="px-2 py-2 min-w-0">
+            <span className="block text-[9px] uppercase font-bold text-slate-500 truncate">Agenda</span>
+            <span className="text-sm font-extrabold text-white tabular-nums">{appointments.length}</span>
           </div>
-          <div className="px-3 py-2">
-            <span className="block text-[9px] uppercase font-bold text-amber-500">Pend.</span>
-            <span className="text-base font-extrabold text-amber-300">{(stats?.pendientes ?? 0) + (stats?.enProceso ?? 0)}</span>
+          <div className="px-2 py-2 min-w-0">
+            <span className="block text-[9px] uppercase font-bold text-amber-500 truncate">Pend.</span>
+            <span className="text-sm font-extrabold text-amber-300 tabular-nums">{(stats?.pendientes ?? 0) + (stats?.enProceso ?? 0)}</span>
           </div>
-          <div className="px-3 py-2">
-            <span className="block text-[9px] uppercase font-bold text-emerald-500">Cobrado</span>
-            <span className="text-base font-extrabold text-emerald-300">{(stats?.ingresosCobrados ?? 0).toLocaleString("es-PY")}</span>
+          <div className="px-2 py-2 min-w-0">
+            <span className="block text-[9px] uppercase font-bold text-emerald-500 truncate">Cobrado</span>
+            <span className="text-[11px] leading-tight font-extrabold text-emerald-300 tabular-nums break-all">
+              {(stats?.ingresosCobrados ?? 0).toLocaleString("es-PY")}
+            </span>
+          </div>
+          <div className="px-2 py-2 min-w-0">
+            <span className="block text-[9px] uppercase font-bold text-rose-500 truncate">A cobrar</span>
+            <span className="text-[11px] leading-tight font-extrabold text-rose-300 tabular-nums break-all">
+              {(stats?.montoPendienteCobro ?? 0).toLocaleString("es-PY")}
+            </span>
           </div>
         </div>
+        {(stats?.faltaPagar ?? 0) > 0 && (
+          <p className="mt-1 px-0.5 text-[10px] text-rose-400/90">
+            {stats?.faltaPagar} servicio(s) finalizado(s) con cobro pendiente
+          </p>
+        )}
       </section>
 
       {/* Métricas completas de escritorio */}
