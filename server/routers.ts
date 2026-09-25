@@ -483,6 +483,18 @@ export const appRouter = router({
       .mutation(async ({ input }) => await db.deleteAppointment(input.id)),
 
     stats: publicProcedure.query(async () => await db.getDashboardStats()),
+
+    /** Tablero gerencial (no mezclado con la agenda operativa). */
+    managerialStats: publicProcedure
+      .input(
+        z
+          .object({
+            dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await db.getManagerialDashboard(input || {})),
   }),
 
   customers: router({

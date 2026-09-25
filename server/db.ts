@@ -11,6 +11,11 @@ import {
   timeSlotsOverlap,
   withNormalizedTimeSlot,
 } from "../shared/scheduling";
+import {
+  computeManagerialStats,
+  type ManagerialDateRange,
+  type ManagerialDashboardStats,
+} from "../shared/managerialStats";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -725,6 +730,16 @@ export async function getDashboardStats() {
     serviciosActivos,
   };
 }
+
+/** Tablero gerencial (filtro opcional por fechas). Independiente de la agenda operativa. */
+export async function getManagerialDashboard(
+  range: ManagerialDateRange = {}
+): Promise<ManagerialDashboardStats> {
+  const rows = await listAppointments();
+  return computeManagerialStats(rows as ManagerialAppointmentRowLike[], range);
+}
+
+type ManagerialAppointmentRowLike = Parameters<typeof computeManagerialStats>[0][number];
 
 /** Busca turnos del mismo día que solapan el horario (excluye cancelados). */
 export async function findOverlappingAppointments(params: {

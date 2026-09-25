@@ -32,9 +32,11 @@ import {
   Printer,
   GripVertical,
   Wallet,
+  LayoutDashboard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CashLedgerPanel } from "@/components/CashLedgerPanel";
+import { ManagerialDashboard } from "@/components/ManagerialDashboard";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
 import { isLikelyPdfReceipt, receiptViewUrl } from "@/lib/receiptUrl";
@@ -106,9 +108,9 @@ export default function Home() {
   const [paymentFilter, setPaymentFilter] = useState<string>("todos");
   const [vehicleFilter, setVehicleFilter] = useState<string>("todos");
   const [clientTypeFilter, setClientTypeFilter] = useState<string>("todos");
-  const [activeTab, setActiveTab] = useState<"calendario" | "ordenes" | "portal_preview" | "caja">(
-    "calendario"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "calendario" | "ordenes" | "portal_preview" | "caja" | "gerencial"
+  >("calendario");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -1208,7 +1210,8 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Resumen Mobile */}
+      {/* Resumen Mobile — oculto en Tablero / Caja (evita mezclar con agenda) */}
+      {activeTab !== "gerencial" && activeTab !== "caja" && (
       <section className="sm:hidden px-3.5 pt-2.5">
         <div className="grid grid-cols-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/90 divide-x divide-slate-800">
           <div className="px-2 py-2 min-w-0">
@@ -1239,8 +1242,10 @@ export default function Home() {
           </p>
         )}
       </section>
+      )}
 
-      {/* Métricas completas de escritorio */}
+      {/* Métricas escritorio — solo agenda */}
+      {activeTab !== "gerencial" && activeTab !== "caja" && (
       <section className="hidden sm:block px-3.5 sm:px-6 max-w-7xl mx-auto w-full pt-3 pb-1">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col justify-between">
@@ -1285,6 +1290,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      )}
 
       {/* Navegación de Vistas y Selector de Fecha */}
       <section className="px-3.5 sm:px-6 max-w-7xl mx-auto w-full py-2 sm:py-2.5 space-y-2.5">
@@ -1300,6 +1306,17 @@ export default function Home() {
               }`}
             >
               Calendario
+            </button>
+            <button
+              onClick={() => setActiveTab("gerencial")}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                activeTab === "gerencial"
+                  ? "bg-red-600 text-white shadow-md shadow-red-600/30"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 shrink-0" />
+              <span>Tablero</span>
             </button>
             <button
               onClick={() => setActiveTab("ordenes")}
@@ -1397,7 +1414,7 @@ export default function Home() {
         </div>
 
         {/* Buscador agenda (oculto en Caja) */}
-        {activeTab !== "caja" && (
+        {activeTab !== "caja" && activeTab !== "gerencial" && (
         <div className="hidden sm:flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -2064,6 +2081,9 @@ export default function Home() {
         {/* VISTA: CAJA (ingresos / egresos) — aparte de la agenda */}
         {activeTab === "caja" && <CashLedgerPanel />}
 
+        {/* VISTA: TABLERO GERENCIAL — aparte de la agenda */}
+        {activeTab === "gerencial" && <ManagerialDashboard />}
+
         {/* VISTA 3: PREVIEW PORTAL CLIENTES */}
         {activeTab === "portal_preview" && (
           <div className="max-w-2xl mx-auto space-y-4 pt-1">
@@ -2162,13 +2182,13 @@ export default function Home() {
 
         <button
           type="button"
-          onClick={() => setActiveTab("caja")}
+          onClick={() => setActiveTab("gerencial")}
           className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold transition-colors ${
-            activeTab === "caja" ? "text-red-400" : "text-slate-400"
+            activeTab === "gerencial" ? "text-red-400" : "text-slate-400"
           }`}
         >
-          <Wallet className="w-4 h-4 mb-0.5" />
-          <span>Caja I/E</span>
+          <LayoutDashboard className="w-4 h-4 mb-0.5" />
+          <span>Tablero</span>
         </button>
 
         <button
@@ -2178,6 +2198,17 @@ export default function Home() {
         >
           <Plus className="w-4 h-4 stroke-[3]" />
           <span>Agendar</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("caja")}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-[10px] font-bold transition-colors ${
+            activeTab === "caja" ? "text-red-400" : "text-slate-400"
+          }`}
+        >
+          <Wallet className="w-4 h-4 mb-0.5" />
+          <span>Caja I/E</span>
         </button>
 
         <button
