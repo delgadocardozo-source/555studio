@@ -19,7 +19,12 @@ import { storagePut } from "./storage";
 import * as db from "./db";
 import * as cashDb from "./cashLedgerDb";
 import * as payrollDb from "./payrollDb";
+import * as inventoryDb from "./inventoryDb";
+import * as suppliersDb from "./suppliersDb";
+import * as receivablesDb from "./receivablesDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
+import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
+import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
 
 function isPrivateVercelBlobUrl(url: string): boolean {
   try {
@@ -739,6 +744,236 @@ export const appRouter = router({
       payTypes: STAFF_PAY_TYPES,
       concepts: PAYMENT_CONCEPTS,
     })),
+  }),
+
+  /** Inventario de insumos — ERP aparte de agenda. */
+  inventory: router({
+    listItems: publicProcedure
+      .input(z.object({ includeInactive: z.boolean().optional() }).optional())
+      .query(async ({ input }) => await inventoryDb.listInventoryItems(input || {})),
+
+    stats: publicProcedure.query(async () => await inventoryDb.getInventoryStats()),
+
+    listMovements: publicProcedure
+      .input(z.object({ limit: z.number().int().positive().max(200).optional() }).optional())
+      .query(async ({ input }) => await inventoryDb.listStockMovements(input?.limit ?? 50)),
+
+    createItem: publicProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          category: z.string().optional(),
+          unit: z.string().optional(),
+          stock: z.number().int().nonnegative().optional(),
+          minStock: z.number().int().nonnegative().optional(),
+          unitCost: z.number().int().nonnegative().nullable().optional(),
+          notes: z.string().optional(),
+          active: z.boolean().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await inventoryDb.createInventoryItem(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo crear el ítem",
+          });
+        }
+      }),
+
+    updateItem: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          data: z.object({
+            name: z.string().min(1).optional(),
+            category: z.string().optional(),
+            unit: z.string().optional(),
+            stock: z.number().int().nonnegative().optional(),
+            minStock: z.number().int().nonnegative().optional(),
+            unitCost: z.number().int().nonnegative().nullable().optional(),
+            notes: z.string().optional(),
+            active: z.boolean().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await inventoryDb.updateInventoryItem(input.id, input.data);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo actualizar el ítem",
+          });
+        }
+      }),
+
+    applyMovement: publicProcedure
+      .input(
+        z.object({
+          itemId: z.number().int(),
+          type: z.enum(STOCK_MOVEMENT_TYPES),
+          quantity: z.number().int().positive(),
+          movementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await inventoryDb.applyStockMovement(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar el movimiento",
+          });
+        }
+      }),
+
+    meta: publicProcedure.query(() => ({
+      categories: INVENTORY_CATEGORIES,
+      units: INVENTORY_UNITS,
+      movementTypes: STOCK_MOVEMENT_TYPES,
+    })),
+  }),
+
+  /** Proveedores — ERP aparte de agenda. */
+  suppliers: router({
+    list: publicProcedure
+      .input(
+        z
+          .object({
+            includeInactive: z.boolean().optional(),
+            search: z.string().optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await suppliersDb.listSuppliers(input || {})),
+
+    create: publicProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          phone: z.string().optional(),
+          category: z.string().optional(),
+          notes: z.string().optional(),
+          active: z.boolean().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await suppliersDb.createSupplier(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo crear el proveedor",
+          });
+        }
+      }),
+
+    update: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          data: z.object({
+            name: z.string().min(1).optional(),
+            phone: z.string().optional(),
+            category: z.string().optional(),
+            notes: z.string().optional(),
+            active: z.boolean().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await suppliersDb.updateSupplier(input.id, input.data);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo actualizar el proveedor",
+          });
+        }
+      }),
+
+    meta: publicProcedure.query(() => ({
+      categories: SUPPLIER_CATEGORIES,
+    })),
+  }),
+
+  /** Cuentas por cobrar / deudores — ERP; luego se conecta a agenda. */
+  receivables: router({
+    list: publicProcedure.query(async () => await receivablesDb.listReceivables()),
+
+    stats: publicProcedure.query(async () => await receivablesDb.getReceivableStats()),
+
+    create: publicProcedure
+      .input(
+        z.object({
+          clientName: z.string().min(1),
+          clientPhone: z.string().optional(),
+          concept: z.string().min(1),
+          amount: z.number().positive(),
+          amountPaid: z.number().nonnegative().optional(),
+          dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          status: z.enum(["pendiente", "parcial", "cobrado", "anulado"]).optional(),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await receivablesDb.createReceivable(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar la deuda",
+          });
+        }
+      }),
+
+    update: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          data: z.object({
+            clientName: z.string().min(1).optional(),
+            clientPhone: z.string().optional(),
+            concept: z.string().min(1).optional(),
+            amount: z.number().positive().optional(),
+            amountPaid: z.number().nonnegative().optional(),
+            dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            status: z.enum(["pendiente", "parcial", "cobrado", "anulado"]).optional(),
+            notes: z.string().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await receivablesDb.updateReceivable(input.id, input.data);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo actualizar la deuda",
+          });
+        }
+      }),
+
+    registerPayment: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          amount: z.number().positive(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await receivablesDb.registerReceivablePayment(input.id, input.amount);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar el cobro",
+          });
+        }
+      }),
   }),
 });
 
