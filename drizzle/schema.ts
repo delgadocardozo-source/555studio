@@ -168,3 +168,45 @@ export const cashMovements = mysqlTable("cash_movements", {
 
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type InsertCashMovement = typeof cashMovements.$inferInsert;
+
+/**
+ * Personal del lavadero (nómina básica).
+ * Independiente de agenda (appointments) y de caja general (cash_movements).
+ */
+export const staffPayTypeEnum = mysqlEnum("staffPayType", [
+  "diario",
+  "semanal",
+  "quincenal",
+  "mensual",
+  "variable",
+]);
+
+export const staffMembers = mysqlTable("staff_members", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  role: varchar("role", { length: 80 }).notNull(),
+  payType: staffPayTypeEnum.notNull().default("quincenal"),
+  baseAmount: int("baseAmount"),
+  active: int("active").notNull().default(1),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StaffMemberRow = typeof staffMembers.$inferSelect;
+export type InsertStaffMember = typeof staffMembers.$inferInsert;
+
+export const staffPayments = mysqlTable("staff_payments", {
+  id: int("id").autoincrement().primaryKey(),
+  staffId: int("staffId").notNull(),
+  staffName: varchar("staffName", { length: 120 }).notNull(),
+  amount: int("amount").notNull(),
+  paymentDate: varchar("paymentDate", { length: 10 }).notNull(),
+  concept: varchar("concept", { length: 80 }).notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StaffPaymentRow = typeof staffPayments.$inferSelect;
+export type InsertStaffPayment = typeof staffPayments.$inferInsert;

@@ -108,6 +108,7 @@ export function ManagerialDashboard() {
 
   const { data: dash, isLoading } = trpc.appointments.managerialStats.useQuery(range);
   const { data: caja } = trpc.cashLedger.stats.useQuery(range);
+  const { data: payroll } = trpc.payroll.stats.useQuery(range);
 
   const rangeLabel =
     preset === "todo"
@@ -291,6 +292,29 @@ export function ManagerialDashboard() {
                 value={formatGs(caja?.balance || 0)}
                 tone="sky"
                 hint={`${caja?.count || 0} movimiento(s)`}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2 px-0.5">
+              Personal (nómina aparte)
+            </p>
+            <div className="grid grid-cols-3 gap-2.5">
+              <KpiCard
+                label="Personal activo"
+                value={payroll?.staffActive ?? 0}
+                tone="sky"
+              />
+              <KpiCard
+                label="Pagos"
+                value={payroll?.paymentsCount ?? 0}
+                hint="En el rango"
+              />
+              <KpiCard
+                label="Total pagado"
+                value={formatGs(payroll?.totalPaid || 0)}
+                tone="amber"
               />
             </div>
           </div>

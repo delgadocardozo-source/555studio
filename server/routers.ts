@@ -18,6 +18,8 @@ import { publicProcedure, router } from "./_core/trpc";
 import { storagePut } from "./storage";
 import * as db from "./db";
 import * as cashDb from "./cashLedgerDb";
+import * as payrollDb from "./payrollDb";
+import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 
 function isPrivateVercelBlobUrl(url: string): boolean {
   try {
@@ -615,6 +617,128 @@ export const appRouter = router({
           });
         }
       }),
+  }),
+
+  /** Nómina / pagos a personal — ERP básico aparte de agenda y caja. */
+  payroll: router({
+    listStaff: publicProcedure
+      .input(z.object({ includeInactive: z.boolean().optional() }).optional())
+      .query(async ({ input }) => await payrollDb.listStaff(input || {})),
+
+    createStaff: publicProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          role: z.string().optional(),
+          payType: z.enum(STAFF_PAY_TYPES).optional(),
+          baseAmount: z.number().int().nonnegative().nullable().optional(),
+          active: z.boolean().optional(),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await payrollDb.createStaff(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo crear el personal",
+          });
+        }
+      }),
+
+    updateStaff: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          data: z.object({
+            name: z.string().min(1).optional(),
+            role: z.string().optional(),
+            payType: z.enum(STAFF_PAY_TYPES).optional(),
+            baseAmount: z.number().int().nonnegative().nullable().optional(),
+            active: z.boolean().optional(),
+            notes: z.string().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await payrollDb.updateStaff(input.id, input.data);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo actualizar el personal",
+          });
+        }
+      }),
+
+    listPayments: publicProcedure
+      .input(
+        z
+          .object({
+            staffId: z.number().int().optional(),
+            dateFrom: z.string().optional(),
+            dateTo: z.string().optional(),
+            concept: z.string().optional(),
+            search: z.string().optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await payrollDb.listPayments(input || {})),
+
+    stats: publicProcedure
+      .input(
+        z
+          .object({
+            staffId: z.number().int().optional(),
+            dateFrom: z.string().optional(),
+            dateTo: z.string().optional(),
+            concept: z.string().optional(),
+            search: z.string().optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await payrollDb.getPayrollStats(input || {})),
+
+    createPayment: publicProcedure
+      .input(
+        z.object({
+          staffId: z.number().int(),
+          amount: z.number().positive(),
+          paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          concept: z.string().min(1),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await payrollDb.createPayment(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar el pago",
+          });
+        }
+      }),
+
+    deletePayment: publicProcedure
+      .input(z.object({ id: z.number().int() }))
+      .mutation(async ({ input }) => {
+        try {
+          return await payrollDb.deletePayment(input.id);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: err?.message || "Pago no encontrado",
+          });
+        }
+      }),
+
+    meta: publicProcedure.query(() => ({
+      roles: STAFF_ROLES,
+      payTypes: STAFF_PAY_TYPES,
+      concepts: PAYMENT_CONCEPTS,
+    })),
   }),
 });
 
