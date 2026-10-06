@@ -1,6 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import {
   appointmentVehicleCount,
+  availableStartTimes,
   buildTimeSlot,
   durationForVehicles,
   fitsInWorkday,
@@ -9,6 +10,12 @@ import {
   planMoveWithPush,
   ScheduleItem,
 } from "@shared/scheduling";
+import {
+  applyFreeWashToVehicles,
+  catalogPriceForVehicle,
+  withLoyaltyFreeNote,
+} from "@shared/loyalty";
+import { buildReengageWhatsAppText } from "@shared/reengage";
 import { z } from "zod";
 import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
 import { TRPCError } from "@trpc/server";
@@ -132,7 +139,7 @@ const appointmentInputSchema = z.object({
   licensePlate: z.string().optional().nullable(),
   // Lista de vehículos para clientes con más de un auto/camioneta
   vehicles: z.array(vehicleItemInputSchema).min(1, "Debe cargar al menos un vehículo").optional(),
-  servicePrice: z.number().int().positive().optional(),
+  servicePrice: z.number().int().nonnegative().optional(),
   cityZone: z.enum(["Asuncion", "Luque", "Mariano Roque Alonso", "San Lorenzo"]),
   address: z.string().min(3, "La dirección exacta es requerida"),
   locationUrl: z.string().optional().nullable(),
@@ -141,6 +148,8 @@ const appointmentInputSchema = z.object({
   timeSlot: z.string().min(3, "Franja horaria requerida"),
   notes: z.string().optional().nullable(),
   source: z.enum(["interno_manual", "portal_cliente"]).default("interno_manual"),
+  /** Aplicar 1 lavado gratis por fidelización (5 lavados/mes). */
+  applyLoyaltyFree: z.boolean().optional(),
 });
 
 export const appRouter = router({
@@ -188,21 +197,42 @@ export const appRouter = router({
               },
             ];
 
-        const catalogVehicles = rawList.map((v) => ({
-          type: v.type,
+        let catalogVehicles = rawList.map((v) => ({
+          type: v.type as "auto" | "camioneta",
           model: v.model.trim(),
           plate: v.plate?.trim() || null,
-          price: v.type === "auto" ? 90000 : 120000,
+          price: catalogPriceForVehicle(v.type),
         }));
+
+        let loyaltyFree = 0;
+        let notes = input.notes ?? null;
+
+        if (input.applyLoyaltyFree) {
+          const loyalty = await db.getCustomerLoyalty(input.clientPhone);
+          if (!loyalty.eligibleForFreeWash) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "Este cliente aún no tiene lavado gratis. Se premia automáticamente cada 5 lavados finalizados en el mes.",
+            });
+          }
+          const applied = applyFreeWashToVehicles(catalogVehicles);
+          catalogVehicles = applied.vehicles;
+          loyaltyFree = 1;
+          notes = withLoyaltyFreeNote(notes);
+        }
 
         const catalogTotal = catalogVehicles.reduce((acc, curr) => acc + curr.price, 0);
         const totalServicePrice =
-          input.servicePrice != null && input.servicePrice > 0 ? input.servicePrice : catalogTotal;
+          loyaltyFree === 1
+            ? catalogTotal
+            : input.servicePrice != null && input.servicePrice >= 0
+              ? input.servicePrice
+              : catalogTotal;
 
-        // Si el total es custom, repartimos en el primer vehículo y dejamos el resto en 0
-        // para que la suma coincida con lo cobrado (auditoría simple).
+        // Si el total es custom (sin loyalty), repartimos en el primer vehículo.
         const computedVehicles =
-          totalServicePrice === catalogTotal
+          loyaltyFree === 1 || totalServicePrice === catalogTotal
             ? catalogVehicles
             : catalogVehicles.map((v, idx) =>
                 idx === 0 ? { ...v, price: totalServicePrice } : { ...v, price: 0 }
@@ -215,16 +245,21 @@ export const appRouter = router({
           vehicleCount: computedVehicles.length,
         });
 
-        // Guarda o actualiza la ficha del cliente de forma automática para reservas recurrentes
+        // Ficha + garaje del cliente
         await db.upsertCustomerProfile({
           clientName: input.clientName,
           clientPhone: input.clientPhone,
           clientType: input.clientType,
           companyName: input.companyName ?? null,
           clientTaxId: input.clientTaxId?.trim() ? input.clientTaxId.trim() : null,
+          vehicles: computedVehicles.map((v) => ({
+            type: v.type,
+            model: v.model,
+            plate: v.plate || "",
+          })),
         });
 
-        return await db.createAppointment({
+        const created = await db.createAppointment({
           clientName: input.clientName,
           clientPhone: input.clientPhone,
           clientType: input.clientType,
@@ -242,11 +277,47 @@ export const appRouter = router({
           addressReference: input.addressReference ?? null,
           scheduledDate: input.scheduledDate,
           timeSlot: normalizedTimeSlot,
-          notes: input.notes ?? null,
+          notes,
           status: "pendiente",
           paymentStatus: "sin_definir",
           source: input.source || "interno_manual",
-        });
+          loyaltyFree,
+        } as any);
+
+        if (loyaltyFree === 1) {
+          await db.adjustCustomerFreeWashCredits(input.clientPhone, -1);
+        }
+
+        return created;
+      }),
+
+    /** Horarios libres de un día según cantidad de vehículos. */
+    availability: publicProcedure
+      .input(
+        z.object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          vehicleCount: z.number().int().positive().max(20).default(1),
+          excludeId: z.number().int().optional(),
+        })
+      )
+      .query(async ({ input }) => {
+        const dayRows = await db.listAppointments({ date: input.date });
+        const occupiedSlots = dayRows
+          .filter((r) => r.status !== "cancelado")
+          .filter((r) => (input.excludeId ? r.id !== input.excludeId : true))
+          .map((r) => String(r.timeSlot));
+        const starts = availableStartTimes(input.vehicleCount, occupiedSlots);
+        return {
+          date: input.date,
+          vehicleCount: input.vehicleCount,
+          durationMinutes: durationForVehicles(input.vehicleCount),
+          durationLabel: formatDuration(durationForVehicles(input.vehicleCount)),
+          starts,
+          slots: starts.map((start) => ({
+            start,
+            timeSlot: buildTimeSlot(start, input.vehicleCount),
+          })),
+        };
       }),
 
     updateStatus: publicProcedure
@@ -524,6 +595,10 @@ export const appRouter = router({
       .input(z.object({ phone: z.string() }))
       .query(async ({ input }) => await db.findCustomerByPhone(input.phone)),
 
+    loyalty: publicProcedure
+      .input(z.object({ phone: z.string().min(6) }))
+      .query(async ({ input }) => await db.getCustomerLoyalty(input.phone)),
+
     upsert: publicProcedure
       .input(
         z.object({
@@ -532,9 +607,44 @@ export const appRouter = router({
           clientType: z.enum(["particular", "oficina", "empresa_flota"]).default("particular"),
           companyName: z.string().optional().nullable(),
           clientTaxId: z.string().optional().nullable(),
+          vehicles: z
+            .array(
+              z.object({
+                type: z.enum(["auto", "camioneta"]),
+                model: z.string().min(1),
+                plate: z.string().optional(),
+                id: z.string().optional(),
+              })
+            )
+            .optional(),
+          replaceVehicles: z.boolean().optional(),
         })
       )
       .mutation(async ({ input }) => await db.upsertCustomerProfile(input)),
+  }),
+
+  /** Recontacto post-lavado (7 días) — cola operativa + WhatsApp. */
+  reengage: router({
+    list: publicProcedure.query(async () => await db.listReengageCandidates()),
+
+    markSent: publicProcedure
+      .input(z.object({ phone: z.string().min(6) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await db.markCustomerReminderSent(input.phone);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo marcar el recordatorio",
+          });
+        }
+      }),
+
+    previewMessage: publicProcedure
+      .input(z.object({ clientName: z.string(), lastWashDate: z.string() }))
+      .query(({ input }) => ({
+        text: buildReengageWhatsAppText(input),
+      })),
   }),
 
   /**

@@ -16,6 +16,15 @@ import {
   type ManagerialDateRange,
   type ManagerialDashboardStats,
 } from "../shared/managerialStats";
+import {
+  mergeGarageVehicles,
+  parseVehiclesJson,
+  sanitizeCustomerVehicles,
+  type CustomerVehicle,
+  type CustomerVehicleInput,
+} from "../shared/customerGarage";
+import { computeLoyaltyStatus } from "../shared/loyalty";
+import { selectReengageCandidates, type ReengageCandidate } from "../shared/reengage";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -282,11 +291,83 @@ export interface UpsertCustomerProfileParams {
   clientType: "particular" | "oficina" | "empresa_flota";
   companyName?: string | null;
   clientTaxId?: string | null;
+  vehicles?: CustomerVehicleInput[] | null;
+  /** Si true, reemplaza el garaje completo; si false/omit, mergea. */
+  replaceVehicles?: boolean;
 }
 
 export async function upsertCustomerProfile(params: UpsertCustomerProfileParams) {
   const phoneKey = normalizePhoneKey(params.clientPhone);
   if (!phoneKey) return null;
+
+  const incomingVehicles = params.vehicles
+    ? sanitizeCustomerVehicles(params.vehicles)
+    : null;
+
+  if (isVercelBlobRuntime()) {
+    const rows = await readBlobCustomers();
+    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
+    const nowIso = new Date().toISOString();
+    if (index >= 0) {
+      const prevVehicles = parseVehiclesJson(rows[index].vehiclesJson ?? rows[index].vehicles);
+      const vehicles =
+        incomingVehicles == null
+          ? prevVehicles
+          : params.replaceVehicles
+            ? incomingVehicles
+            : mergeGarageVehicles(prevVehicles, incomingVehicles);
+      rows[index] = {
+        ...rows[index],
+        phoneKey,
+        clientName: params.clientName.trim(),
+        clientPhone: params.clientPhone.trim(),
+        clientType: params.clientType,
+        companyName: params.companyName?.trim() || rows[index].companyName || null,
+        clientTaxId: params.clientTaxId?.trim() || rows[index].clientTaxId || null,
+        vehiclesJson: JSON.stringify(vehicles),
+        vehicles,
+        freeWashCredits: Number(rows[index].freeWashCredits) || 0,
+        updatedAt: nowIso,
+        lastUsedAt: nowIso,
+      };
+      await writeBlobCustomers(rows);
+      return hydrateCustomer(rows[index]);
+    }
+
+    const vehicles = incomingVehicles || [];
+    const created = {
+      phoneKey,
+      clientName: params.clientName.trim(),
+      clientPhone: params.clientPhone.trim(),
+      clientType: params.clientType,
+      companyName: params.companyName?.trim() || null,
+      clientTaxId: params.clientTaxId?.trim() || null,
+      vehiclesJson: JSON.stringify(vehicles),
+      vehicles,
+      freeWashCredits: 0,
+      lastWashAt: null as string | null,
+      lastReminderAt: null as string | null,
+      id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastUsedAt: nowIso,
+    };
+    rows.push(created);
+    await writeBlobCustomers(rows);
+    return hydrateCustomer(created);
+  }
+
+  const db = await getDb();
+  if (!db) return null;
+
+  const existing = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  const prevVehicles = existing[0] ? parseVehiclesJson(existing[0].vehiclesJson) : [];
+  const vehicles =
+    incomingVehicles == null
+      ? prevVehicles
+      : params.replaceVehicles
+        ? incomingVehicles
+        : mergeGarageVehicles(prevVehicles, incomingVehicles);
 
   const payload = {
     phoneKey,
@@ -295,40 +376,9 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
     clientType: params.clientType,
     companyName: params.companyName?.trim() || null,
     clientTaxId: params.clientTaxId?.trim() || null,
+    vehiclesJson: JSON.stringify(vehicles),
     lastUsedAt: new Date(),
   };
-
-  if (isVercelBlobRuntime()) {
-    const rows = await readBlobCustomers();
-    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
-    const nowIso = new Date().toISOString();
-    if (index >= 0) {
-      rows[index] = {
-        ...rows[index],
-        ...payload,
-        clientTaxId: payload.clientTaxId || rows[index].clientTaxId || null,
-        companyName: payload.companyName || rows[index].companyName || null,
-        updatedAt: nowIso,
-        lastUsedAt: nowIso,
-      };
-      await writeBlobCustomers(rows);
-      return rows[index];
-    }
-
-    const created = {
-      ...payload,
-      id: rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      lastUsedAt: nowIso,
-    };
-    rows.push(created);
-    await writeBlobCustomers(rows);
-    return created;
-  }
-
-  const db = await getDb();
-  if (!db) return null;
 
   await db.insert(customers).values(payload).onDuplicateKeyUpdate({
     set: {
@@ -337,23 +387,67 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
       clientType: payload.clientType,
       companyName: payload.companyName,
       clientTaxId: payload.clientTaxId || sql`COALESCE(values(clientTaxId), customers.clientTaxId)`,
+      vehiclesJson: payload.vehiclesJson,
       lastUsedAt: new Date(),
       updatedAt: new Date(),
     },
   });
 
   const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
-  return matched[0] ?? null;
+  return matched[0] ? hydrateCustomer(matched[0]) : null;
+}
+
+export type HydratedCustomer = {
+  id?: number;
+  phoneKey: string;
+  clientName: string;
+  clientPhone: string;
+  clientType?: string;
+  companyName?: string | null;
+  clientTaxId?: string | null;
+  vehicles: CustomerVehicle[];
+  vehiclesJson: string;
+  freeWashCredits: number;
+  lastWashAt: string | null;
+  lastReminderAt: string | null;
+  lastUsedAt?: string | Date;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  [key: string]: unknown;
+};
+
+function hydrateCustomer(row: StoredCustomer | Customer): HydratedCustomer {
+  const vehicles = parseVehiclesJson(
+    (row as any).vehiclesJson ?? (row as any).vehicles
+  );
+  return {
+    ...(row as object),
+    phoneKey: String((row as any).phoneKey || ""),
+    clientName: String((row as any).clientName || ""),
+    clientPhone: String((row as any).clientPhone || ""),
+    vehicles,
+    vehiclesJson: JSON.stringify(vehicles),
+    freeWashCredits: Number((row as any).freeWashCredits) || 0,
+    lastWashAt: (row as any).lastWashAt || null,
+    lastReminderAt: (row as any).lastReminderAt
+      ? (row as any).lastReminderAt instanceof Date
+        ? (row as any).lastReminderAt.toISOString()
+        : String((row as any).lastReminderAt)
+      : null,
+  } as HydratedCustomer;
 }
 
 export async function searchCustomers(query: string = "") {
   const clean = query.trim().toLowerCase();
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
+    const mapped = rows.map(hydrateCustomer);
     if (!clean) {
-      return rows.sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || ""))).slice(0, 20);
+      return mapped
+        .sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || "")))
+        .slice(0, 20);
     }
-    return rows
+    return mapped
       .filter((row) => {
         const full = [row.clientName, row.clientPhone, row.companyName, row.clientTaxId, row.phoneKey]
           .filter(Boolean)
@@ -369,11 +463,12 @@ export async function searchCustomers(query: string = "") {
   if (!db) return [];
 
   if (!clean) {
-    return await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(20);
+    const rows = await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(20);
+    return rows.map(hydrateCustomer);
   }
 
   const q = `%${clean}%`;
-  return await db
+  const rows = await db
     .select()
     .from(customers)
     .where(
@@ -387,6 +482,7 @@ export async function searchCustomers(query: string = "") {
     )
     .orderBy(desc(customers.lastUsedAt))
     .limit(20);
+  return rows.map(hydrateCustomer);
 }
 
 export async function findCustomerByPhone(phone: string) {
@@ -395,13 +491,152 @@ export async function findCustomerByPhone(phone: string) {
 
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
-    return rows.find((row) => row.phoneKey === phoneKey) ?? null;
+    const found = rows.find((row) => row.phoneKey === phoneKey);
+    return found ? hydrateCustomer(found) : null;
   }
 
   const db = await getDb();
   if (!db) return null;
   const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
-  return matched[0] ?? null;
+  return matched[0] ? hydrateCustomer(matched[0]) : null;
+}
+
+export async function getCustomerLoyalty(phone: string) {
+  const phoneKey = normalizePhoneKey(phone);
+  if (!phoneKey) {
+    return computeLoyaltyStatus([]);
+  }
+  const cust = await findCustomerByPhone(phone);
+  const rows = await listAppointments({ search: phone });
+  const mine = rows.filter((r) => normalizePhoneKey(r.clientPhone) === phoneKey);
+  return computeLoyaltyStatus(mine as any, {
+    storedCredits: Number(cust?.freeWashCredits) || 0,
+  });
+}
+
+export async function adjustCustomerFreeWashCredits(phone: string, delta: number) {
+  const phoneKey = normalizePhoneKey(phone);
+  if (!phoneKey) return null;
+  if (isVercelBlobRuntime()) {
+    const rows = await readBlobCustomers();
+    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
+    if (index < 0) return null;
+    const next = Math.max(0, (Number(rows[index].freeWashCredits) || 0) + delta);
+    rows[index] = {
+      ...rows[index],
+      freeWashCredits: next,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeBlobCustomers(rows);
+    return hydrateCustomer(rows[index]);
+  }
+  const db = await getDb();
+  if (!db) return null;
+  const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  if (!matched[0]) return null;
+  const next = Math.max(0, (Number(matched[0].freeWashCredits) || 0) + delta);
+  await db
+    .update(customers)
+    .set({ freeWashCredits: next, updatedAt: new Date() })
+    .where(eq(customers.phoneKey, phoneKey));
+  const updated = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  return updated[0] ? hydrateCustomer(updated[0]) : null;
+}
+
+async function touchCustomerAfterWash(phone: string, washDate: string) {
+  const phoneKey = normalizePhoneKey(phone);
+  if (!phoneKey) return;
+
+  // Recalcular créditos por umbral 5 lavados/mes
+  const rows = await listAppointments({ search: phone });
+  const mine = rows.filter((r) => normalizePhoneKey(r.clientPhone) === phoneKey);
+  const status = computeLoyaltyStatus(mine as any);
+  // Créditos = earned - used; persistimos ese valor.
+  const credits = status.freeWashCredits;
+
+  if (isVercelBlobRuntime()) {
+    const custRows = await readBlobCustomers();
+    const index = custRows.findIndex((row) => row.phoneKey === phoneKey);
+    if (index < 0) return;
+    custRows[index] = {
+      ...custRows[index],
+      lastWashAt: washDate,
+      freeWashCredits: credits,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeBlobCustomers(custRows);
+    return;
+  }
+
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(customers)
+    .set({
+      lastWashAt: washDate,
+      freeWashCredits: credits,
+      updatedAt: new Date(),
+    })
+    .where(eq(customers.phoneKey, phoneKey));
+}
+
+export async function markCustomerReminderSent(phone: string) {
+  const phoneKey = normalizePhoneKey(phone);
+  if (!phoneKey) throw new Error("Teléfono inválido");
+  const now = new Date();
+  if (isVercelBlobRuntime()) {
+    const rows = await readBlobCustomers();
+    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
+    if (index < 0) throw new Error("Cliente no encontrado");
+    rows[index] = {
+      ...rows[index],
+      lastReminderAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    await writeBlobCustomers(rows);
+    return hydrateCustomer(rows[index]);
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Base de datos no disponible");
+  await db
+    .update(customers)
+    .set({ lastReminderAt: now, updatedAt: now })
+    .where(eq(customers.phoneKey, phoneKey));
+  const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  if (!matched[0]) throw new Error("Cliente no encontrado");
+  return hydrateCustomer(matched[0]);
+}
+
+export async function listReengageCandidates(today?: string): Promise<ReengageCandidate[]> {
+  const day = today || new Date().toISOString().slice(0, 10);
+  const appointments = await listAppointments({});
+  let customerRows: StoredCustomer[] = [];
+  if (isVercelBlobRuntime()) {
+    customerRows = await readBlobCustomers();
+  } else {
+    const db = await getDb();
+    customerRows = db ? await db.select().from(customers) : [];
+  }
+  return selectReengageCandidates({
+    today: day,
+    appointments: appointments.map((a) => ({
+      clientPhone: a.clientPhone,
+      clientName: a.clientName,
+      scheduledDate: a.scheduledDate,
+      status: a.status,
+    })),
+    customers: customerRows.map((c) => ({
+      phoneKey: c.phoneKey,
+      clientName: c.clientName,
+      clientPhone: c.clientPhone,
+      lastReminderAt: c.lastReminderAt
+        ? c.lastReminderAt instanceof Date
+          ? c.lastReminderAt.toISOString()
+          : String(c.lastReminderAt)
+        : null,
+    })),
+    normalizePhoneKey,
+  });
 }
 
 function matchFilters(row: StoredAppointment, filters: AppointmentFilters) {
@@ -649,7 +884,7 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
   };
 
   if (isVercelBlobRuntime()) {
-    return withAppointmentsLock(async () => {
+    const finalized = await withAppointmentsLock(async () => {
       const rows = await readBlobAppointments();
       const index = rows.findIndex((row) => row.id === params.id);
       if (index < 0) throw new Error("Turno no encontrado");
@@ -657,12 +892,26 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
       await writeBlobAppointments(rows);
       return rows[index];
     });
+    if (!wasAlreadyFinalized) {
+      await touchCustomerAfterWash(
+        String(existing.clientPhone),
+        String(existing.scheduledDate || new Date().toISOString().slice(0, 10))
+      );
+    }
+    return finalized;
   }
 
   const db = await getDb();
   if (!db) throw new Error("Base de datos no disponible");
   await db.update(appointments).set(payload).where(eq(appointments.id, params.id));
-  return await getAppointmentById(params.id);
+  const updated = await getAppointmentById(params.id);
+  if (!wasAlreadyFinalized && existing.clientPhone) {
+    await touchCustomerAfterWash(
+      String(existing.clientPhone),
+      String(existing.scheduledDate || new Date().toISOString().slice(0, 10))
+    );
+  }
+  return updated;
 }
 
 export async function updateAppointmentDetails(
