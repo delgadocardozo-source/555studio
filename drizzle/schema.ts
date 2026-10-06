@@ -168,3 +168,109 @@ export const cashMovements = mysqlTable("cash_movements", {
 
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type InsertCashMovement = typeof cashMovements.$inferInsert;
+
+/**
+ * Personal del lavadero (nómina básica).
+ * Independiente de agenda (appointments) y de caja general (cash_movements).
+ */
+export const staffPayTypeEnum = mysqlEnum("staffPayType", [
+  "diario",
+  "semanal",
+  "quincenal",
+  "mensual",
+  "variable",
+]);
+
+export const staffMembers = mysqlTable("staff_members", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  role: varchar("role", { length: 80 }).notNull(),
+  payType: staffPayTypeEnum.notNull().default("quincenal"),
+  baseAmount: int("baseAmount"),
+  active: int("active").notNull().default(1),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StaffMemberRow = typeof staffMembers.$inferSelect;
+export type InsertStaffMember = typeof staffMembers.$inferInsert;
+
+export const staffPayments = mysqlTable("staff_payments", {
+  id: int("id").autoincrement().primaryKey(),
+  staffId: int("staffId").notNull(),
+  staffName: varchar("staffName", { length: 120 }).notNull(),
+  amount: int("amount").notNull(),
+  paymentDate: varchar("paymentDate", { length: 10 }).notNull(),
+  concept: varchar("concept", { length: 80 }).notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StaffPaymentRow = typeof staffPayments.$inferSelect;
+export type InsertStaffPayment = typeof staffPayments.$inferInsert;
+
+/** Inventario de insumos (ERP). */
+export const inventoryItems = mysqlTable("inventory_items", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  category: varchar("category", { length: 80 }).notNull(),
+  unit: varchar("unit", { length: 20 }).notNull().default("unid"),
+  stock: int("stock").notNull().default(0),
+  minStock: int("minStock").notNull().default(0),
+  unitCost: int("unitCost"),
+  notes: text("notes"),
+  active: int("active").notNull().default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const stockMovementTypeEnum = mysqlEnum("stockMovementType", ["entrada", "salida", "ajuste"]);
+
+export const stockMovements = mysqlTable("stock_movements", {
+  id: int("id").autoincrement().primaryKey(),
+  itemId: int("itemId").notNull(),
+  itemName: varchar("itemName", { length: 120 }).notNull(),
+  type: stockMovementTypeEnum.notNull(),
+  quantity: int("quantity").notNull(),
+  movementDate: varchar("movementDate", { length: 10 }).notNull(),
+  notes: text("notes"),
+  stockAfter: int("stockAfter").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+/** Proveedores (ERP). */
+export const suppliers = mysqlTable("suppliers", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  phone: varchar("phone", { length: 40 }).notNull().default(""),
+  category: varchar("category", { length: 80 }).notNull().default("Otros"),
+  notes: text("notes"),
+  active: int("active").notNull().default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Cuentas por cobrar / deudores (ERP). */
+export const receivableStatusEnum = mysqlEnum("receivableStatus", [
+  "pendiente",
+  "parcial",
+  "cobrado",
+  "anulado",
+]);
+
+export const receivables = mysqlTable("receivables", {
+  id: int("id").autoincrement().primaryKey(),
+  clientName: varchar("clientName", { length: 120 }).notNull(),
+  clientPhone: varchar("clientPhone", { length: 40 }).notNull().default(""),
+  concept: varchar("concept", { length: 160 }).notNull(),
+  amount: int("amount").notNull(),
+  amountPaid: int("amountPaid").notNull().default(0),
+  dueDate: varchar("dueDate", { length: 10 }).notNull(),
+  status: receivableStatusEnum.notNull().default("pendiente"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
