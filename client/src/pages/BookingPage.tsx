@@ -420,7 +420,7 @@ export default function BookingPage() {
           </button>
         </header>
 
-        <main className="relative z-10 flex-1 flex flex-col justify-end px-5 sm:px-8 pb-[max(2rem,env(safe-area-inset-bottom))] pt-10 max-w-xl mx-auto w-full">
+        <main className="relative z-20 flex-1 flex flex-col justify-end px-5 sm:px-8 pb-[max(2rem,env(safe-area-inset-bottom))] pt-10 max-w-xl mx-auto w-full">
           <div className="space-y-8">
             <div className="space-y-5">
               <img
@@ -436,11 +436,11 @@ export default function BookingPage() {
               </p>
             </div>
 
-            <div className="booking-rise booking-rise-delay-3 flex flex-col sm:flex-row gap-3">
+            <div className="booking-rise booking-rise-delay-3 flex flex-col sm:flex-row gap-3 relative z-30">
               <button
                 type="button"
                 onClick={goCliente}
-                className="booking-cta-live inline-flex items-center justify-center gap-2 px-7 py-4 rounded-xl bg-[var(--bk-sun)] text-white text-sm font-extrabold tracking-wide hover:brightness-110 transition-[filter]"
+                className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-xl bg-[var(--bk-sun)] text-white text-sm font-extrabold tracking-wide hover:brightness-110 transition-[filter] shadow-[0_0_0_0_rgba(230,0,18,0.35)] hover:shadow-[0_0_0_6px_rgba(230,0,18,0.12)]"
               >
                 Reservar turno
                 <ArrowRight className="w-4 h-4" />
