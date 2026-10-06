@@ -621,6 +621,24 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
     }
   }
 
+  const existing = await getAppointmentById(params.id);
+  if (!existing) throw new Error("Turno no encontrado");
+
+  const wasAlreadyFinalized = existing.status === "finalizado";
+
+  // Consumo de stock según armado de lavado — solo al pasar a finalizado la 1ª vez.
+  // Idempotente: re-editar cobro no vuelve a descontar.
+  if (!wasAlreadyFinalized) {
+    const { consumeStockForWash } = await import("./washRecipeDb");
+    const vehicles = parseAppointmentVehicles(existing as StoredAppointment);
+    await consumeStockForWash({
+      appointmentId: Number(existing.id),
+      code: String(existing.code || `#${existing.id}`),
+      vehicles,
+      movementDate: String(existing.scheduledDate || new Date().toISOString().slice(0, 10)),
+    });
+  }
+
   const payload = {
     status: "finalizado" as const,
     paymentStatus: params.paymentStatus,

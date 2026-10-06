@@ -66,9 +66,9 @@ const MODULES: Array<{
   {
     id: "inventario",
     path: "/erp/inventario",
-    label: "Inventario",
+    label: "Stock",
     short: "Stock",
-    blurb: "Insumos, stock mínimo y movimientos",
+    blurb: "Existencias + armado de lavado (consumo al finalizar)",
     icon: Package,
     accent: "text-emerald-300 bg-emerald-500/15 border-emerald-500/30",
   },
@@ -178,7 +178,7 @@ export default function ErpHome() {
               <p className="text-[10px] sm:text-xs text-slate-400 truncate">
                 {current
                   ? `${current.label} — aparte de la agenda`
-                  : "Hub · 6 módulos · sin mezclar con la agenda"}
+                  : "Hub · Stock por consumo de lavado · aparte de la agenda"}
               </p>
             </div>
           </div>
