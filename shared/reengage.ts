@@ -2,6 +2,9 @@
 
 export const REENGAGE_DAYS_AFTER_WASH = 7;
 
+/** Portal público de reserva (cliente). */
+export const PUBLIC_BOOKING_URL = "https://555-detail-agenda.vercel.app/agendar";
+
 export interface ReengageCandidate {
   phoneKey: string;
   clientName: string;
@@ -22,13 +25,16 @@ export function daysBetween(fromIsoDate: string, toIsoDate: string): number {
 export function buildReengageWhatsAppText(params: {
   clientName: string;
   lastWashDate: string;
+  bookingUrl?: string;
 }): string {
   const first = String(params.clientName || "").trim().split(/\s+/)[0] || "hola";
+  const url = String(params.bookingUrl || PUBLIC_BOOKING_URL).trim();
   return (
-    `¡Hola ${first}! 👋 Somos *555 Detail Studio*.\n\n` +
+    `¡Hola ${first}! Somos *555 Detail Studio*.\n\n` +
     `Hace una semana limpiamos tu vehículo (${params.lastWashDate}).\n` +
-    `¿Querés agendar de nuevo? Podés responder este mensaje o entrar a reservar online.\n\n` +
-    `¡Te esperamos! ✨`
+    `¿Querés agendar de nuevo? Podés responder este mensaje o reservar online:\n` +
+    `${url}\n\n` +
+    `¡Te esperamos!`
   );
 }
 
