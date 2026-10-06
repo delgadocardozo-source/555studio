@@ -428,7 +428,7 @@ export default function BookingPage() {
                 alt="555 Detail Studio"
                 className="booking-rise h-16 sm:h-20 w-auto"
               />
-              <h1 className="booking-rise booking-rise-delay-1 font-brand text-[2.35rem] sm:text-5xl font-extrabold tracking-tight leading-[1.05] text-[var(--bk-ink)] max-w-[14ch]">
+              <h1 className="booking-rise booking-rise-delay-1 font-brand text-[2.15rem] sm:text-[2.75rem] font-extrabold tracking-tight leading-[1.15] text-[var(--bk-ink)] max-w-[16ch]">
                 Tu auto, otra vez impecable.
               </h1>
               <p className="booking-rise booking-rise-delay-2 text-base sm:text-lg text-[var(--bk-muted)] max-w-[32ch] leading-relaxed">
