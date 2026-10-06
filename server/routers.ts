@@ -22,9 +22,11 @@ import * as payrollDb from "./payrollDb";
 import * as inventoryDb from "./inventoryDb";
 import * as suppliersDb from "./suppliersDb";
 import * as receivablesDb from "./receivablesDb";
+import * as washRecipeDb from "./washRecipeDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
 import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
+import { WASH_VEHICLE_TYPES } from "@shared/washRecipe";
 
 function isPrivateVercelBlobUrl(url: string): boolean {
   try {
@@ -261,7 +263,16 @@ export const appRouter = router({
           paymentReceiptName: z.string().optional().nullable(),
         })
       )
-      .mutation(async ({ input }) => await db.finalizeAppointmentWithPayment(input)),
+      .mutation(async ({ input }) => {
+        try {
+          return await db.finalizeAppointmentWithPayment(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo finalizar el lavado",
+          });
+        }
+      }),
 
     // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual).
     // Blob privado: el navegador no puede abrir la URL cruda (Forbidden).
@@ -835,6 +846,64 @@ export const appRouter = router({
       units: INVENTORY_UNITS,
       movementTypes: STOCK_MOVEMENT_TYPES,
     })),
+
+    /** Armado de lavado: insumos por auto / camioneta. */
+    getRecipes: publicProcedure.query(async () => await washRecipeDb.getWashRecipes()),
+
+    setRecipes: publicProcedure
+      .input(
+        z.object({
+          auto: z
+            .array(
+              z.object({
+                itemId: z.number().int().positive(),
+                quantityPerVehicle: z.number().int().positive(),
+              })
+            )
+            .optional(),
+          camioneta: z
+            .array(
+              z.object({
+                itemId: z.number().int().positive(),
+                quantityPerVehicle: z.number().int().positive(),
+              })
+            )
+            .optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await washRecipeDb.setWashRecipes(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar el armado",
+          });
+        }
+      }),
+
+    setRecipeForType: publicProcedure
+      .input(
+        z.object({
+          vehicleType: z.enum(WASH_VEHICLE_TYPES),
+          lines: z.array(
+            z.object({
+              itemId: z.number().int().positive(),
+              quantityPerVehicle: z.number().int().positive(),
+            })
+          ),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await washRecipeDb.setWashRecipeForType(input.vehicleType, input.lines);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar la receta",
+          });
+        }
+      }),
   }),
 
   /** Proveedores — ERP aparte de agenda. */

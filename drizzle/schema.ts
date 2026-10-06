@@ -274,3 +274,22 @@ export const receivables = mysqlTable("receivables", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+/** Armado de lavado: insumos por tipo de vehículo (auto / camioneta). */
+export const washVehicleTypeEnum = mysqlEnum("washVehicleType", ["auto", "camioneta"]);
+
+export const washRecipeLines = mysqlTable("wash_recipe_lines", {
+  id: int("id").autoincrement().primaryKey(),
+  vehicleType: washVehicleTypeEnum.notNull(),
+  itemId: int("itemId").notNull(),
+  quantityPerVehicle: int("quantityPerVehicle").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Idempotencia: un turno finalizado solo descuenta stock una vez. */
+export const washStockConsumptions = mysqlTable("wash_stock_consumptions", {
+  appointmentId: int("appointmentId").primaryKey(),
+  notes: text("notes"),
+  consumedAt: timestamp("consumedAt").defaultNow().notNull(),
+});
+
