@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { computeInventoryStats, type InventoryItem } from "../shared/inventory";
 import {
-  computeReceivableStats,
-  deriveReceivableStatus,
+  computeAppointmentDebtStats,
+  listOpenDebtsFromAppointments,
   remainingOf,
-  type Receivable,
 } from "../shared/receivables";
 import { matchSupplierSearch, type Supplier } from "../shared/suppliers";
 
@@ -61,69 +60,83 @@ describe("inventory stats", () => {
   });
 });
 
-describe("receivables", () => {
-  const rows: Receivable[] = [
+describe("receivables (auto from agenda)", () => {
+  const appointments = [
     {
       id: 1,
+      code: "A1",
       clientName: "Ana",
-      clientPhone: "",
-      concept: "Detail",
-      amount: 500000,
-      amountPaid: 0,
-      dueDate: "2020-01-01",
-      status: "pendiente",
+      clientPhone: "0981",
+      scheduledDate: "2020-01-01",
+      timeSlot: "08:00 - 09:20",
+      vehicleType: "auto",
+      vehicleModel: "Corolla",
+      vehicleCount: 1,
+      servicePrice: 90000,
+      status: "finalizado",
+      paymentStatus: "falta_pagar",
       notes: "",
-      createdAt: "2026-09-01T00:00:00.000Z",
-      updatedAt: "2026-09-01T00:00:00.000Z",
     },
     {
       id: 2,
+      code: "B2",
       clientName: "Bob",
-      clientPhone: "",
-      concept: "Lavado",
-      amount: 200000,
-      amountPaid: 50000,
-      dueDate: "2099-01-01",
-      status: "parcial",
+      clientPhone: "0982",
+      scheduledDate: "2099-01-01",
+      timeSlot: "10:00 - 11:20",
+      vehicleType: "camioneta",
+      vehicleModel: "Hilux",
+      vehicleCount: 1,
+      servicePrice: 120000,
+      status: "finalizado",
+      paymentStatus: "falta_pagar",
       notes: "",
-      createdAt: "2026-09-01T00:00:00.000Z",
-      updatedAt: "2026-09-01T00:00:00.000Z",
     },
     {
       id: 3,
+      code: "C3",
       clientName: "Cata",
-      clientPhone: "",
-      concept: "Full",
-      amount: 100000,
-      amountPaid: 100000,
-      dueDate: "2026-09-01",
-      status: "cobrado",
+      clientPhone: "0983",
+      scheduledDate: "2026-09-01",
+      timeSlot: "12:00 - 13:20",
+      vehicleType: "auto",
+      vehicleModel: "Onix",
+      vehicleCount: 1,
+      servicePrice: 90000,
+      status: "finalizado",
+      paymentStatus: "pagado",
       notes: "",
-      createdAt: "2026-09-01T00:00:00.000Z",
-      updatedAt: "2026-09-01T00:00:00.000Z",
+    },
+    {
+      id: 4,
+      code: "D4",
+      clientName: "Dan",
+      clientPhone: "0984",
+      scheduledDate: "2026-09-02",
+      timeSlot: "14:00 - 15:20",
+      vehicleType: "auto",
+      vehicleModel: "Gol",
+      vehicleCount: 1,
+      servicePrice: 90000,
+      status: "cancelado",
+      paymentStatus: "falta_pagar",
+      notes: "",
     },
   ];
 
-  it("calcula restante y deriva estado", () => {
-    expect(remainingOf(rows[0])).toBe(500000);
-    expect(remainingOf(rows[1])).toBe(150000);
-    expect(deriveReceivableStatus({ amount: 100, amountPaid: 40, status: "pendiente" })).toBe(
-      "parcial"
-    );
-    expect(deriveReceivableStatus({ amount: 100, amountPaid: 100, status: "pendiente" })).toBe(
-      "cobrado"
-    );
-    expect(deriveReceivableStatus({ amount: 100, amountPaid: 0, status: "anulado" })).toBe(
-      "anulado"
-    );
+  it("lista solo falta_pagar no cancelados", () => {
+    const open = listOpenDebtsFromAppointments(appointments);
+    expect(open).toHaveLength(2);
+    expect(open.map((d) => d.code).sort()).toEqual(["A1", "B2"]);
+    expect(remainingOf(open[0])).toBe(open[0].amount);
   });
 
-  it("resume abiertas, vencidas y montos", () => {
-    const stats = computeReceivableStats(rows);
+  it("resume abiertas y vencidas", () => {
+    const open = listOpenDebtsFromAppointments(appointments);
+    const stats = computeAppointmentDebtStats(open);
     expect(stats.openCount).toBe(2);
     expect(stats.overdueCount).toBe(1);
-    expect(stats.pendingGs).toBe(650000);
-    expect(stats.collectedGs).toBe(150000);
+    expect(stats.pendingGs).toBe(210000);
   });
 });
 
