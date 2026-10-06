@@ -61,7 +61,7 @@ function newKey() {
 function RisingSunBackdrop({ className = "" }: { className?: string }) {
   return (
     <svg
-      className={`booking-sun-rays absolute inset-0 h-full w-full ${className}`}
+      className={`booking-sun-rays pointer-events-none absolute inset-0 h-full w-full ${className}`}
       viewBox="0 0 100 100"
       preserveAspectRatio="xMidYMid slice"
       aria-hidden
@@ -385,10 +385,10 @@ export default function BookingPage() {
   if (step === "inicio") {
     return (
       <div className="booking-portal min-h-dvh flex flex-col relative overflow-hidden">
-        <div className="absolute inset-0 bg-[#eceef1]" />
+        <div className="pointer-events-none absolute inset-0 bg-[#eceef1]" />
         <RisingSunBackdrop />
         <div
-          className="absolute inset-0 pointer-events-none"
+          className="pointer-events-none absolute inset-0"
           style={{
             background:
               "linear-gradient(180deg, rgba(243,244,246,0.15) 0%, rgba(243,244,246,0.55) 45%, rgba(243,244,246,0.96) 100%)",
