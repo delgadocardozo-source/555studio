@@ -1079,77 +1079,30 @@ export const appRouter = router({
     })),
   }),
 
-  /** Cuentas por cobrar / deudores — ERP; luego se conecta a agenda. */
+  /** Deudores automáticos: turnos de agenda con falta_pagar. */
   receivables: router({
-    list: publicProcedure.query(async () => await receivablesDb.listReceivables()),
+    list: publicProcedure
+      .input(z.object({ includeCollected: z.boolean().optional() }).optional())
+      .query(async ({ input }) => await receivablesDb.listDebts(input || {})),
 
-    stats: publicProcedure.query(async () => await receivablesDb.getReceivableStats()),
+    stats: publicProcedure.query(async () => await receivablesDb.getDebtStats()),
 
-    create: publicProcedure
+    markPaid: publicProcedure
       .input(
         z.object({
-          clientName: z.string().min(1),
-          clientPhone: z.string().optional(),
-          concept: z.string().min(1),
-          amount: z.number().positive(),
-          amountPaid: z.number().nonnegative().optional(),
-          dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          status: z.enum(["pendiente", "parcial", "cobrado", "anulado"]).optional(),
-          notes: z.string().optional(),
+          appointmentId: z.number().int(),
+          paymentMethod: z.enum(["efectivo", "comprobante_digital"]),
+          paymentReceiptUrl: z.string().optional().nullable(),
+          paymentReceiptName: z.string().optional().nullable(),
         })
       )
       .mutation(async ({ input }) => {
         try {
-          return await receivablesDb.createReceivable(input);
+          return await receivablesDb.markDebtPaid(input);
         } catch (err: any) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: err?.message || "No se pudo registrar la deuda",
-          });
-        }
-      }),
-
-    update: publicProcedure
-      .input(
-        z.object({
-          id: z.number().int(),
-          data: z.object({
-            clientName: z.string().min(1).optional(),
-            clientPhone: z.string().optional(),
-            concept: z.string().min(1).optional(),
-            amount: z.number().positive().optional(),
-            amountPaid: z.number().nonnegative().optional(),
-            dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-            status: z.enum(["pendiente", "parcial", "cobrado", "anulado"]).optional(),
-            notes: z.string().optional(),
-          }),
-        })
-      )
-      .mutation(async ({ input }) => {
-        try {
-          return await receivablesDb.updateReceivable(input.id, input.data);
-        } catch (err: any) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: err?.message || "No se pudo actualizar la deuda",
-          });
-        }
-      }),
-
-    registerPayment: publicProcedure
-      .input(
-        z.object({
-          id: z.number().int(),
-          amount: z.number().positive(),
-        })
-      )
-      .mutation(async ({ input }) => {
-        try {
-          return await receivablesDb.registerReceivablePayment(input.id, input.amount);
-        } catch (err: any) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: err?.message || "No se pudo registrar el cobro",
+            message: err?.message || "No se pudo marcar el cobro",
           });
         }
       }),

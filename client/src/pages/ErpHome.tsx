@@ -89,7 +89,7 @@ const MODULES: Array<{
     path: "/erp/deudores",
     label: "Deudores",
     short: "Deudas",
-    blurb: "Cuentas por cobrar a clientes",
+    blurb: "Automático: lavados de agenda sin pagar",
     icon: HandCoins,
     accent: "text-amber-300 bg-amber-500/15 border-amber-500/30",
   },
