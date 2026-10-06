@@ -31,8 +31,8 @@ export function ReengagePanel() {
             Recontacto · 7 días
           </h2>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Clientes con lavado hace ~1 semana, sin turno futuro. El sistema arma el mensaje;
-            vos lo mandás por WhatsApp (estable, sin chatbot frágil).
+            Clientes con lavado hace ~1 semana, sin turno futuro. El mensaje incluye el link a{" "}
+            <span className="text-emerald-400/90">/agendar</span>; vos lo mandás por WhatsApp.
           </p>
         </div>
         <button

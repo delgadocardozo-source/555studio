@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { computeLoyaltyStatus, applyFreeWashToVehicles, LOYALTY_WASHES_PER_REWARD } from "../shared/loyalty";
 import { mergeGarageVehicles, sanitizeCustomerVehicles } from "../shared/customerGarage";
-import { selectReengageCandidates, daysBetween } from "../shared/reengage";
+import {
+  selectReengageCandidates,
+  daysBetween,
+  buildReengageWhatsAppText,
+  PUBLIC_BOOKING_URL,
+} from "../shared/reengage";
 
 describe("loyalty", () => {
   it("premia cada 5 lavados del mes", () => {
@@ -93,5 +98,16 @@ describe("reengage", () => {
     });
     expect(candidates).toHaveLength(1);
     expect(candidates[0].clientName).toBe("Ana");
+  });
+
+  it("incluye link de reserva online en el mensaje WA", () => {
+    const text = buildReengageWhatsAppText({
+      clientName: "Soleyl Pérez",
+      lastWashDate: "2026-09-28",
+    });
+    expect(text).toContain("Soleyl");
+    expect(text).toContain("2026-09-28");
+    expect(text).toContain(PUBLIC_BOOKING_URL);
+    expect(text).toContain("reservar online");
   });
 });
