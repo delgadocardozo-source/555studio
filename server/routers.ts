@@ -15,6 +15,13 @@ import {
   catalogPriceForVehicle,
   withLoyaltyFreeNote,
 } from "@shared/loyalty";
+import {
+  buildClientWhatsAppConfirmation,
+  buildWhatsAppConfirmationUrl,
+  isPricePending,
+  resolveBookingPrice,
+  type HistoryPriceRow,
+} from "@shared/bookingPrice";
 import { buildReengageWhatsAppText } from "@shared/reengage";
 import { z } from "zod";
 import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
@@ -188,6 +195,7 @@ export const appRouter = router({
     create: publicProcedure
       .input(appointmentInputSchema)
       .mutation(async ({ input }) => {
+        const source = input.source || "interno_manual";
         const rawList = input.vehicles && input.vehicles.length > 0
           ? input.vehicles
           : [
@@ -207,6 +215,9 @@ export const appRouter = router({
 
         let loyaltyFree = 0;
         let notes = input.notes ?? null;
+        let pricePending = 0;
+        let priceAutoApplied = false;
+        let status: "pendiente" | "confirmado" = "pendiente";
 
         if (input.applyLoyaltyFree) {
           const loyalty = await db.getCustomerLoyalty(input.clientPhone);
@@ -224,16 +235,57 @@ export const appRouter = router({
         }
 
         const catalogTotal = catalogVehicles.reduce((acc, curr) => acc + curr.price, 0);
-        const totalServicePrice =
+        let totalServicePrice =
           loyaltyFree === 1
             ? catalogTotal
             : input.servicePrice != null && input.servicePrice >= 0
               ? input.servicePrice
               : catalogTotal;
 
-        // Si el total es custom (sin loyalty), repartimos en el primer vehículo.
+        // Portal cliente: no expone precio. Historial del mismo vehículo → auto-precio + auto-confirmación.
+        // Sin historial → sugerencia catálogo interna + pricePending para staff.
+        if (source === "portal_cliente" && loyaltyFree !== 1) {
+          const historyRows = await db.listAppointments({ search: input.clientPhone });
+          const phoneKey = db.normalizePhoneKey(input.clientPhone);
+          const history: HistoryPriceRow[] = historyRows.filter(
+            (r) => db.normalizePhoneKey(String(r.clientPhone || "")) === phoneKey
+          ) as HistoryPriceRow[];
+          const resolved = resolveBookingPrice({
+            vehicles: catalogVehicles.map((v) => ({
+              type: v.type,
+              model: v.model,
+              plate: v.plate,
+            })),
+            history,
+          });
+          catalogVehicles = resolved.vehicles.map((v) => ({
+            type: v.type,
+            model: v.model,
+            plate: v.plate?.trim() ? String(v.plate).trim() : null,
+            price: v.price,
+          }));
+          totalServicePrice = resolved.total;
+          if (resolved.fromHistory) {
+            pricePending = 0;
+            priceAutoApplied = true;
+            status = "confirmado";
+          } else {
+            pricePending = 1;
+            // Sugerencia interna (catálogo / parcial historial) — staff confirma o edita
+            priceAutoApplied = false;
+            status = "pendiente";
+          }
+        } else if (source === "portal_cliente" && loyaltyFree === 1) {
+          pricePending = 0;
+          priceAutoApplied = true;
+          status = "confirmado";
+        }
+
+        // Si el total es custom (sin loyalty / sin resolución portal), repartimos en el primer vehículo.
         const computedVehicles =
-          loyaltyFree === 1 || totalServicePrice === catalogTotal
+          loyaltyFree === 1 ||
+          source === "portal_cliente" ||
+          totalServicePrice === catalogTotal
             ? catalogVehicles
             : catalogVehicles.map((v, idx) =>
                 idx === 0 ? { ...v, price: totalServicePrice } : { ...v, price: 0 }
@@ -279,17 +331,138 @@ export const appRouter = router({
           scheduledDate: input.scheduledDate,
           timeSlot: normalizedTimeSlot,
           notes,
-          status: "pendiente",
+          status,
           paymentStatus: "sin_definir",
-          source: input.source || "interno_manual",
+          source,
           loyaltyFree,
+          pricePending,
         } as any);
+
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "No se pudo crear el turno",
+          });
+        }
 
         if (loyaltyFree === 1) {
           await db.adjustCustomerFreeWashCredits(input.clientPhone, -1);
         }
 
-        return created;
+        const vehicleLabel =
+          computedVehicles.length === 1
+            ? "1 vehículo"
+            : `${computedVehicles.length} vehículos`;
+        const confirmationText =
+          pricePending === 0
+            ? buildClientWhatsAppConfirmation({
+                clientName: String(created.clientName),
+                scheduledDate: String(created.scheduledDate),
+                timeSlot: String(created.timeSlot),
+                vehicleLabel,
+                servicePrice: Number(created.servicePrice) || 0,
+                code: created.code,
+                cityZone: created.cityZone as string,
+              })
+            : "";
+        const whatsAppUrl =
+          pricePending === 0
+            ? buildWhatsAppConfirmationUrl({
+                clientPhone: String(created.clientPhone),
+                text: confirmationText,
+              })
+            : "";
+
+        return {
+          ...created,
+          pricePending,
+          priceAutoApplied,
+          whatsAppUrl: whatsAppUrl || null,
+          confirmationText: confirmationText || null,
+        } as typeof created & {
+          pricePending: number;
+          priceAutoApplied: boolean;
+          whatsAppUrl: string | null;
+          confirmationText: string | null;
+        };
+      }),
+
+    /** Turnos con precio pendiente de definir (portal / staff). */
+    listPricePending: publicProcedure.query(async () => {
+      const rows = await db.listAppointments({});
+      return rows
+        .filter((r) => r.status !== "cancelado" && isPricePending(r as any))
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    }),
+
+    /** Define o ajusta el precio y opcionalmente marca confirmado + link WA. */
+    setServicePrice: publicProcedure
+      .input(
+        z.object({
+          id: z.number().int(),
+          servicePrice: z.number().int().positive(),
+          markConfirmed: z.boolean().optional().default(true),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const existing = await db.getAppointmentById(input.id);
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Turno no encontrado" });
+        }
+        const payload: Record<string, unknown> = {
+          servicePrice: input.servicePrice,
+          pricePending: 0,
+        };
+        if (input.markConfirmed && existing.status === "pendiente") {
+          payload.status = "confirmado";
+        }
+        // Reparte el total en el primer vehículo del JSON si existe
+        try {
+          const parsed = existing.vehicles
+            ? typeof existing.vehicles === "string"
+              ? JSON.parse(existing.vehicles)
+              : existing.vehicles
+            : null;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const next = parsed.map((v: any, idx: number) =>
+              idx === 0
+                ? { ...v, price: input.servicePrice }
+                : { ...v, price: Number(v.price) > 0 && idx > 0 ? 0 : Number(v.price) || 0 }
+            );
+            // Primer vehículo lleva el total; resto a 0 si era precio consolidado
+            next[0] = { ...next[0], price: input.servicePrice };
+            for (let i = 1; i < next.length; i++) next[i] = { ...next[i], price: 0 };
+            payload.vehicles = JSON.stringify(next);
+          }
+        } catch {
+          // ignore JSON errors
+        }
+
+        const updated = await db.updateAppointmentDetails(input.id, payload as any);
+        const row = (updated || existing) as typeof existing;
+        const count = appointmentVehicleCount(row);
+        const vehicleLabel = count === 1 ? "1 vehículo" : `${count} vehículos`;
+        const confirmationText = buildClientWhatsAppConfirmation({
+          clientName: String(row.clientName),
+          scheduledDate: String(row.scheduledDate),
+          timeSlot: String(row.timeSlot),
+          vehicleLabel,
+          servicePrice: input.servicePrice,
+          code: row.code,
+          cityZone: row.cityZone as string,
+        });
+        const whatsAppUrl = buildWhatsAppConfirmationUrl({
+          clientPhone: String(row.clientPhone),
+          text: confirmationText,
+        });
+        return {
+          ...row,
+          servicePrice: input.servicePrice,
+          pricePending: 0,
+          status: (payload.status as typeof row.status) || row.status,
+          whatsAppUrl,
+          confirmationText,
+        };
       }),
 
     /** Horarios libres de un día según cantidad de vehículos. */
@@ -402,6 +575,7 @@ export const appRouter = router({
           payload.vehicles = JSON.stringify(computed);
           payload.vehicleCount = computed.length;
           payload.servicePrice = total;
+          payload.pricePending = 0;
           if (computed[0]) {
             payload.vehicleType = computed[0].type;
             payload.vehicleModel = computed[0].model;
@@ -409,6 +583,7 @@ export const appRouter = router({
           }
         } else if (input.data.servicePrice != null && input.data.servicePrice > 0) {
           payload.servicePrice = input.data.servicePrice;
+          payload.pricePending = 0;
         }
 
         const existing = await db.getAppointmentById(input.id);

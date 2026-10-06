@@ -149,6 +149,12 @@ export const appointments = mysqlTable("appointments", {
 
   /** 1 = turno con lavado gratis por fidelización */
   loyaltyFree: int("loyaltyFree").notNull().default(0),
+
+  /**
+   * 1 = precio pendiente de definir por staff (portal cliente sin historial).
+   * 0 = precio listo (manual, catálogo operador, o auto desde historial).
+   */
+  pricePending: int("pricePending").notNull().default(0),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

@@ -198,4 +198,90 @@ describe("Appointments tRPC router with Payment Rules", () => {
     });
     expect(publicish.url).toContain("public.blob.vercel-storage.com");
   });
+
+  it("portal booking without history leaves pricePending and suggested catalog", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+    const phone = "0981 555 010";
+
+    const created = await caller.appointments.create({
+      clientName: "Portal Nuevo",
+      clientPhone: phone,
+      clientType: "particular",
+      cityZone: "Asuncion",
+      address: "Centro",
+      scheduledDate: "2026-10-20",
+      timeSlot: "08:00 - 09:20",
+      source: "portal_cliente",
+      vehicles: [{ type: "auto", model: "HB20 Nuevo", plate: "NEW 001" }],
+    });
+
+    expect(created.pricePending).toBe(1);
+    expect(created.priceAutoApplied).toBe(false);
+    expect(created.status).toBe("pendiente");
+    expect(created.servicePrice).toBe(90000);
+    expect(created.whatsAppUrl).toBeNull();
+
+    const pending = await caller.appointments.listPricePending();
+    expect(pending.some((p) => p.id === created.id)).toBe(true);
+
+    const priced = await caller.appointments.setServicePrice({
+      id: created.id,
+      servicePrice: 95000,
+      markConfirmed: true,
+    });
+    expect(priced.pricePending).toBe(0);
+    expect(priced.servicePrice).toBe(95000);
+    expect(priced.status).toBe("confirmado");
+    expect(priced.whatsAppUrl).toContain("wa.me");
+    expect(priced.confirmationText).toContain("95.000");
+
+    await caller.appointments.delete({ id: created.id });
+  });
+
+  it("portal booking with same vehicle history auto-applies price and confirms", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+    const phone = "0981 555 020";
+
+    const past = await caller.appointments.create({
+      clientName: "Cliente Recurrente",
+      clientPhone: phone,
+      clientType: "particular",
+      cityZone: "Luque",
+      address: "Luque centro",
+      scheduledDate: "2026-09-01",
+      timeSlot: "10:00 - 11:20",
+      source: "interno_manual",
+      servicePrice: 98000,
+      vehicles: [{ type: "camioneta", model: "SW4", plate: "REC 777" }],
+    });
+    await caller.appointments.finalizeWithPayment({
+      id: past.id,
+      paymentStatus: "pagado",
+      paymentMethod: "efectivo",
+    });
+
+    const created = await caller.appointments.create({
+      clientName: "Cliente Recurrente",
+      clientPhone: phone,
+      clientType: "particular",
+      cityZone: "Luque",
+      address: "Luque centro",
+      scheduledDate: "2026-10-21",
+      timeSlot: "11:00 - 12:20",
+      source: "portal_cliente",
+      vehicles: [{ type: "camioneta", model: "SW4", plate: "REC 777" }],
+    });
+
+    expect(created.pricePending).toBe(0);
+    expect(created.priceAutoApplied).toBe(true);
+    expect(created.status).toBe("confirmado");
+    expect(created.servicePrice).toBe(98000);
+    expect(created.whatsAppUrl).toContain("wa.me");
+    expect(created.confirmationText).toContain("98.000");
+
+    await caller.appointments.delete({ id: created.id });
+    await caller.appointments.delete({ id: past.id });
+  });
 });

@@ -204,6 +204,8 @@ export default function BookingPage() {
     };
   }, [validVehicles, applyLoyalty, loyalty?.eligibleForFreeWash]);
 
+  const isPortal = mode === "portal";
+
   const goCliente = () => setStep("cliente");
 
   const goVehiculos = () => {
@@ -265,7 +267,7 @@ export default function BookingPage() {
           notes: notes.trim() || null,
           source,
         });
-        codes.push(String((created as { code?: string; id: string }).code || created.id));
+        codes.push(String((created as { code?: string; id: number }).code || created.id));
       } else {
         let loyaltyUsed = false;
         for (const v of validVehicles) {
@@ -291,7 +293,7 @@ export default function BookingPage() {
             source,
           });
           if (useLoyalty) loyaltyUsed = true;
-          codes.push(String((created as { code?: string; id: string }).code || created.id));
+          codes.push(String((created as { code?: string; id: number }).code || created.id));
         }
       }
 
@@ -346,6 +348,12 @@ export default function BookingPage() {
                 {doneCodes.length === 1
                   ? `Reservamos tu lavado · código ${doneCodes[0]}.`
                   : `Reservamos ${doneCodes.length} turnos: ${doneCodes.join(", ")}.`}
+                {mode === "portal" && (
+                  <>
+                    {" "}
+                    Te confirmamos el detalle por WhatsApp.
+                  </>
+                )}
               </p>
             </div>
             <div className="flex flex-col gap-2 pt-2">
@@ -622,6 +630,11 @@ export default function BookingPage() {
                   <p className="text-sm text-[var(--bk-muted)]">
                     Podés agendar más de uno en el mismo turno o en horarios separados.
                   </p>
+                  {isPortal && (
+                    <p className="text-[11px] text-[var(--bk-muted)]">
+                      El precio se confirma según vehículo y servicio
+                    </p>
+                  )}
                 </div>
 
                 {vehicles.map((v, idx) => (
@@ -662,7 +675,13 @@ export default function BookingPage() {
                               : "bg-[var(--bk-bg)] text-[var(--bk-muted)] border border-[var(--bk-line)]"
                           }`}
                         >
-                          {t === "auto" ? "Auto · 90.000" : "Camioneta · 120.000"}
+                          {t === "auto"
+                            ? isPortal
+                              ? "Auto"
+                              : "Auto · 90.000"
+                            : isPortal
+                              ? "Camioneta"
+                              : "Camioneta · 120.000"}
                         </button>
                       ))}
                     </div>
@@ -875,14 +894,20 @@ export default function BookingPage() {
                       </li>
                     ))}
                   </ul>
-                  <p className="font-brand text-2xl font-extrabold text-[var(--bk-ink)] pt-1">
-                    {formatGs(pricePreview.total)}
-                    {pricePreview.applied && (
-                      <span className="ml-2 text-xs font-bold text-[var(--bk-sun)] align-middle">
-                        + 1 gratis
-                      </span>
-                    )}
-                  </p>
+                  {isPortal ? (
+                    <p className="text-[11px] text-[var(--bk-muted)] pt-2 leading-snug">
+                      El precio se confirma según vehículo y servicio
+                    </p>
+                  ) : (
+                    <p className="font-brand text-2xl font-extrabold text-[var(--bk-ink)] pt-1">
+                      {formatGs(pricePreview.total)}
+                      {pricePreview.applied && (
+                        <span className="ml-2 text-xs font-bold text-[var(--bk-sun)] align-middle">
+                          + 1 gratis
+                        </span>
+                      )}
+                    </p>
+                  )}
                 </div>
 
                 {loyalty?.eligibleForFreeWash && (

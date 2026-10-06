@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
+import { buildConfirmationFile } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
 import { isLikelyPdfReceipt, receiptViewUrl } from "@/lib/receiptUrl";
 import {
@@ -63,6 +63,12 @@ import {
   timeToMinutes,
   washesThatFitInGap,
 } from "@shared/scheduling";
+import { catalogPriceForVehicle } from "@shared/loyalty";
+import {
+  buildClientWhatsAppConfirmation,
+  buildWhatsAppConfirmationUrl,
+  isPricePending,
+} from "@shared/bookingPrice";
 
 // Zonas y opciones
 const CITIES = ["Todas", "Asuncion", "Luque", "Mariano Roque Alonso", "San Lorenzo"] as const;
@@ -129,6 +135,9 @@ export default function Home() {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isFinalizeModalOpen, setIsFinalizeModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
+  const [detailEditPrice, setDetailEditPrice] = useState<number>(90000);
+  const [dismissedPriceBannerIds, setDismissedPriceBannerIds] = useState<number[]>([]);
+  const priceBannerToastShownRef = useRef<Set<number>>(new Set());
 
   // Estado para Finalización de Servicio y Cobro
   const [finalizeData, setFinalizeData] = useState<{
@@ -216,6 +225,9 @@ export default function Home() {
   }, [activeTab, selectedDate, cityFilter, statusFilter, paymentFilter, vehicleFilter, clientTypeFilter, searchQuery]);
 
   const { data: appointments = [], isLoading: listLoading } = trpc.appointments.list.useQuery(queryFilters);
+  const { data: pricePendingList = [] } = trpc.appointments.listPricePending.useQuery(undefined, {
+    refetchInterval: 20_000,
+  });
 
   const { data: formDayAppointments = [] } = trpc.appointments.list.useQuery(
     { date: formData.scheduledDate },
@@ -689,6 +701,44 @@ export default function Home() {
     },
   });
 
+  const setServicePriceMutation = trpc.appointments.setServicePrice.useMutation({
+    onSuccess: (updated) => {
+      toast.success("Precio guardado");
+      if (updated) {
+        setSelectedAppointment(updated);
+        setDetailEditPrice(Number(updated.servicePrice) || 0);
+      }
+      utils.appointments.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "No se pudo guardar el precio"),
+  });
+
+  const visiblePricePending = useMemo(
+    () =>
+      pricePendingList.filter((a) => !dismissedPriceBannerIds.includes(Number(a.id))),
+    [pricePendingList, dismissedPriceBannerIds]
+  );
+
+  React.useEffect(() => {
+    const fresh = pricePendingList.filter(
+      (a) => !priceBannerToastShownRef.current.has(Number(a.id))
+    );
+    if (fresh.length === 0) return;
+    const first = fresh[0];
+    toast.message("Nuevo agendamiento — definir precio", {
+      description: `${first.clientName} · ${first.code}`,
+      action: {
+        label: "Ver",
+        onClick: () => {
+          openAppointmentDetail(first);
+          if (first.scheduledDate) setSelectedDate(String(first.scheduledDate));
+        },
+      },
+      duration: 12_000,
+    });
+    fresh.forEach((a) => priceBannerToastShownRef.current.add(Number(a.id)));
+  }, [pricePendingList]);
+
   const resetForm = () => {
     setFormData({
       clientName: "",
@@ -1064,7 +1114,18 @@ export default function Home() {
     }
   };
 
-  const confirmationText = (app: any) => buildConfirmationText(app);
+  const confirmationText = (app: any) => {
+    const count = appointmentVehicleCount(app);
+    return buildClientWhatsAppConfirmation({
+      clientName: String(app.clientName || ""),
+      scheduledDate: String(app.scheduledDate || ""),
+      timeSlot: String(app.timeSlot || ""),
+      vehicleLabel: count === 1 ? "1 vehículo" : `${count} vehículos`,
+      servicePrice: Number(app.servicePrice) || 0,
+      code: app.code,
+      cityZone: app.cityZone,
+    });
+  };
 
   const handleDownloadConfirmation = async (app: any) => {
     try {
@@ -1102,9 +1163,47 @@ export default function Home() {
   };
 
   const handleWhatsAppConfirmation = (app: any) => {
-    const phone = String(app.clientPhone || "").replace(/\D/g, "").replace(/^0/, "");
-    const phoneWithCountry = phone.startsWith("595") ? phone : `595${phone}`;
-    window.open(`https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(confirmationText(app))}`, "_blank", "noopener,noreferrer");
+    if (isPricePending(app) || !(Number(app.servicePrice) > 0)) {
+      toast.error("Definí el precio antes de confirmar por WhatsApp");
+      return;
+    }
+    const text = confirmationText(app);
+    const url = buildWhatsAppConfirmationUrl({
+      clientPhone: String(app.clientPhone || ""),
+      text,
+    });
+    if (!url) {
+      toast.error("Teléfono inválido");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const openAppointmentDetail = (app: any) => {
+    setSelectedAppointment(app);
+    const catalog = catalogPriceForVehicle(
+      app.vehicleType === "camioneta" ? "camioneta" : "auto"
+    );
+    setDetailEditPrice(Number(app.servicePrice) > 0 ? Number(app.servicePrice) : catalog);
+    setIsDetailOpen(true);
+  };
+
+  const handleSaveDetailPrice = (opts?: { openWhatsApp?: boolean }) => {
+    if (!selectedAppointment) return;
+    if (!Number.isFinite(detailEditPrice) || detailEditPrice <= 0) {
+      toast.error("Ingresá un precio válido");
+      return;
+    }
+    setServicePriceMutation.mutate(
+      { id: selectedAppointment.id, servicePrice: detailEditPrice, markConfirmed: true },
+      {
+        onSuccess: (updated) => {
+          if (opts?.openWhatsApp && updated?.whatsAppUrl) {
+            window.open(updated.whatsAppUrl, "_blank", "noopener,noreferrer");
+          }
+        },
+      }
+    );
   };
 
   const dayListSource = useMemo(
@@ -1554,6 +1653,47 @@ export default function Home() {
 
       {/* Contenido Principal */}
       <main className="px-3.5 sm:px-6 max-w-7xl mx-auto w-full pb-6 flex-1">
+        {visiblePricePending.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {visiblePricePending.slice(0, 4).map((app) => (
+              <div
+                key={app.id}
+                className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 px-3.5 py-3 shadow-lg shadow-amber-900/20"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-extrabold text-amber-200">
+                    Nuevo agendamiento — definir precio
+                  </p>
+                  <p className="text-[11px] text-amber-100/80 truncate">
+                    {app.clientName} · {app.code} · {app.scheduledDate} {app.timeSlot}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openAppointmentDetail(app);
+                    if (app.scheduledDate) setSelectedDate(String(app.scheduledDate));
+                    setActiveTab("calendario");
+                  }}
+                  className="shrink-0 rounded-xl bg-amber-500 px-3 py-2 text-[11px] font-bold text-slate-950 active:scale-95"
+                >
+                  Definir
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDismissedPriceBannerIds((prev) => [...prev, Number(app.id)])
+                  }
+                  className="shrink-0 p-1.5 text-amber-200/70 hover:text-white"
+                  aria-label="Ocultar aviso"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* VISTA 1: TIMELINE CONTINUO (por horario real) */}
         {activeTab === "calendario" && (
           <div className="space-y-3">
@@ -1811,8 +1951,7 @@ export default function Home() {
                           className="text-left min-w-0"
                           onClick={() => {
                             setSelectedAppointmentId(app.id);
-                            setSelectedAppointment(app);
-                            setIsDetailOpen(true);
+                            openAppointmentDetail(app);
                           }}
                         >
                           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
@@ -1934,8 +2073,7 @@ export default function Home() {
                 <div
                   key={app.id}
                   onClick={() => {
-                    setSelectedAppointment(app);
-                    setIsDetailOpen(true);
+                    openAppointmentDetail(app);
                   }}
                   className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5 cursor-pointer hover:border-slate-700 active:bg-slate-800 shadow-md"
                 >
@@ -2003,7 +2141,9 @@ export default function Home() {
                   <div className="pt-2 border-t border-slate-800 flex justify-between items-center text-xs">
                     <span className="text-slate-400">{app.scheduledDate} · {buildTimeSlot(getSlotStart(String(app.timeSlot || "")), appointmentVehicleCount(app))}</span>
                     <span className="font-extrabold text-red-400 font-display text-sm">
-                      {app.servicePrice.toLocaleString("es-PY")} Gs.
+                      {isPricePending(app)
+                        ? "Definir precio"
+                        : `${Number(app.servicePrice || 0).toLocaleString("es-PY")} Gs.`}
                     </span>
                   </div>
                 </div>
@@ -2062,11 +2202,21 @@ export default function Home() {
                         )}
                       </td>
                       <td className="px-4 py-3 font-bold text-white font-display">
-                        {app.servicePrice.toLocaleString("es-PY")} Gs.
+                        {isPricePending(app) ? (
+                          <span className="text-amber-300 text-[11px]">Definir precio</span>
+                        ) : (
+                          `${Number(app.servicePrice || 0).toLocaleString("es-PY")} Gs.`
+                        )}
                       </td>
                       <td className="px-4 py-3">{getStatusBadge(app.status)}</td>
                       <td className="px-4 py-3">{getPaymentBadge(app.paymentStatus, app.paymentMethod)}</td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right space-x-2">
+                        <button
+                          onClick={() => openAppointmentDetail(app)}
+                          className="text-xs text-slate-300 hover:text-white font-bold hover:underline"
+                        >
+                          Ver
+                        </button>
                         <button
                           onClick={() => handleInitiateFinalize(app)}
                           className="text-xs text-red-400 hover:text-red-300 font-bold hover:underline"
@@ -3219,50 +3369,150 @@ export default function Home() {
                 </div>
               </div>
 
-                  <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-2">
+                  <div
+                    className={`bg-slate-950 p-3 rounded-2xl border space-y-2 ${
+                      isPricePending(selectedAppointment)
+                        ? "border-amber-500/50"
+                        : "border-slate-800"
+                    }`}
+                  >
+                    {isPricePending(selectedAppointment) && (
+                      <div className="rounded-xl bg-amber-500/15 border border-amber-500/30 px-2.5 py-2 text-[11px] font-bold text-amber-200">
+                        Nuevo agendamiento — definir precio antes de confirmar por WhatsApp
+                      </div>
+                    )}
                     <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
-                      <span className="text-slate-400 font-semibold">Vehículos ({parseVehicles(selectedAppointment).length}):</span>
+                      <span className="text-slate-400 font-semibold">
+                        Vehículos ({parseVehicles(selectedAppointment).length}):
+                      </span>
                       <span className="font-extrabold text-red-400 font-display text-sm">
-                        Total: {selectedAppointment.servicePrice.toLocaleString("es-PY")} Gs.
+                        {isPricePending(selectedAppointment) && !(Number(selectedAppointment.servicePrice) > 0)
+                          ? "Sin precio"
+                          : `Total: ${Number(selectedAppointment.servicePrice || 0).toLocaleString("es-PY")} Gs.`}
                       </span>
                     </div>
                     <div className="space-y-1.5">
                       {parseVehicles(selectedAppointment).map((veh: any, idx: number) => (
-                        <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800">
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800"
+                        >
                           <div className="flex items-center gap-1.5 text-xs text-white">
-                            {veh.type === "auto" ? <Car className="w-3.5 h-3.5 text-red-400" /> : <Truck className="w-3.5 h-3.5 text-red-400" />}
+                            {veh.type === "auto" ? (
+                              <Car className="w-3.5 h-3.5 text-red-400" />
+                            ) : (
+                              <Truck className="w-3.5 h-3.5 text-red-400" />
+                            )}
                             <span className="font-bold">{veh.model}</span>
-                            {veh.plate && <span className="text-[10px] font-mono text-slate-400 bg-slate-950 px-1 py-0.5 rounded border border-slate-800">{veh.plate}</span>}
+                            {veh.plate && (
+                              <span className="text-[10px] font-mono text-slate-400 bg-slate-950 px-1 py-0.5 rounded border border-slate-800">
+                                {veh.plate}
+                              </span>
+                            )}
                           </div>
                           <span className="text-xs font-bold text-slate-300">
-                            {veh.type === "auto" ? "90.000 Gs." : "120.000 Gs."}
+                            {catalogPriceForVehicle(veh.type === "camioneta" ? "camioneta" : "auto").toLocaleString(
+                              "es-PY"
+                            )}{" "}
+                            Gs.
                           </span>
                         </div>
                       ))}
                     </div>
-                <div className="flex justify-between items-center pt-1 border-t border-slate-800">
-                  <span className="text-slate-400">Cobro:</span>
-                  <div>{getPaymentBadge(selectedAppointment.paymentStatus, selectedAppointment.paymentMethod) || <span className="text-slate-500">Pendiente de cierre</span>}</div>
-                </div>
-                {selectedAppointment.paymentReceiptUrl && (
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openReceipt(
-                          selectedAppointment.paymentReceiptUrl!,
-                          selectedAppointment.paymentReceiptName
-                        )
-                      }
-                      className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Ver Comprobante Digital</span>
-                      <Eye className="w-3 h-3" />
-                    </button>
+
+                    <div className="pt-2 border-t border-slate-800 space-y-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Precio del turno (interno)
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(["auto", "camioneta"] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setDetailEditPrice(catalogPriceForVehicle(t))}
+                            className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold border border-slate-700 bg-slate-900 text-slate-200 hover:border-red-500/50"
+                          >
+                            {t === "auto" ? "Auto 90.000" : "Camioneta 120.000"}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sum = parseVehicles(selectedAppointment).reduce(
+                              (s: number, v: any) =>
+                                s +
+                                catalogPriceForVehicle(
+                                  v.type === "camioneta" ? "camioneta" : "auto"
+                                ),
+                              0
+                            );
+                            setDetailEditPrice(sum);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold border border-slate-700 bg-slate-900 text-slate-200 hover:border-red-500/50"
+                        >
+                          Sugerido catálogo
+                        </button>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          step={1000}
+                          value={detailEditPrice}
+                          onChange={(e) => setDetailEditPrice(Number(e.target.value) || 0)}
+                          className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-red-500"
+                        />
+                        <button
+                          type="button"
+                          disabled={setServicePriceMutation.isPending}
+                          onClick={() => handleSaveDetailPrice()}
+                          className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-600 text-[11px] font-bold text-white disabled:opacity-50"
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={
+                          setServicePriceMutation.isPending ||
+                          !(detailEditPrice > 0)
+                        }
+                        onClick={() => handleSaveDetailPrice({ openWhatsApp: true })}
+                        className="w-full min-h-11 px-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 disabled:opacity-50 active:scale-95"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        Confirmar por WhatsApp
+                      </button>
+                    </div>
+
+                    <div className="flex justify-between items-center pt-1 border-t border-slate-800">
+                      <span className="text-slate-400">Cobro:</span>
+                      <div>
+                        {getPaymentBadge(
+                          selectedAppointment.paymentStatus,
+                          selectedAppointment.paymentMethod
+                        ) || <span className="text-slate-500">Pendiente de cierre</span>}
+                      </div>
+                    </div>
+                    {selectedAppointment.paymentReceiptUrl && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openReceipt(
+                              selectedAppointment.paymentReceiptUrl!,
+                              selectedAppointment.paymentReceiptName
+                            )
+                          }
+                          className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-semibold"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>Ver Comprobante Digital</span>
+                          <Eye className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-2">
                 <div className="flex justify-between items-center">
