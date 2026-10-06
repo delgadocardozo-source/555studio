@@ -30,6 +30,7 @@ import * as inventoryDb from "./inventoryDb";
 import * as suppliersDb from "./suppliersDb";
 import * as receivablesDb from "./receivablesDb";
 import * as washRecipeDb from "./washRecipeDb";
+import * as erpControlDb from "./erpControlDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
 import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
@@ -599,6 +600,11 @@ export const appRouter = router({
       .input(z.object({ phone: z.string().min(6) }))
       .query(async ({ input }) => await db.getCustomerLoyalty(input.phone)),
 
+    /** CRM 360 lite para el ERP. */
+    crmList: publicProcedure
+      .input(z.object({ query: z.string().optional(), limit: z.number().int().positive().max(100).optional() }).optional())
+      .query(async ({ input }) => await erpControlDb.listCustomerCrm(input || {})),
+
     upsert: publicProcedure
       .input(
         z.object({
@@ -621,6 +627,20 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => await db.upsertCustomerProfile(input)),
+  }),
+
+  /** Centro de control ERP — KPIs cruzados. */
+  erp: router({
+    controlTower: publicProcedure
+      .input(
+        z
+          .object({
+            dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => await erpControlDb.getErpControlTower(input || {})),
   }),
 
   /** Recontacto post-lavado (7 días) — cola operativa + WhatsApp. */

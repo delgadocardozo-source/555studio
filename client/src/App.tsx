@@ -21,6 +21,7 @@ function Router() {
       <Route path="/erp/proveedores" component={ErpHome} />
       <Route path="/erp/deudores" component={ErpHome} />
       <Route path="/erp/recontacto" component={ErpHome} />
+      <Route path="/erp/clientes" component={ErpHome} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

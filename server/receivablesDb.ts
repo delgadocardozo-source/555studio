@@ -63,6 +63,32 @@ export async function markDebtPaid(params: {
     paymentReceiptUrl: params.paymentReceiptUrl ?? null,
     paymentReceiptName: params.paymentReceiptName ?? null,
   });
+
+  // Best practice: cobranza de agenda → posteo en caja (efectivo), idempotente.
+  if (params.paymentMethod === "efectivo") {
+    try {
+      const { createCashMovement, listCashMovements } = await import("./cashLedgerDb");
+      const code = String(existing.code || `#${existing.id}`);
+      const tag = `[AGENDA:${code}]`;
+      const already = await listCashMovements({ search: tag });
+      if (already.length === 0) {
+        const amount = Math.max(0, Math.round(Number(existing.servicePrice) || 0));
+        if (amount > 0) {
+          await createCashMovement({
+            type: "ingreso",
+            amount,
+            movementDate: String(existing.scheduledDate || new Date().toISOString().slice(0, 10)),
+            person: String(existing.clientName || "Cliente"),
+            category: "Cobro manual",
+            description: `Cobro agenda ${code} · ${existing.clientName || ""} ${tag}`.trim(),
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[erp] posteo caja al cobrar falló", err);
+    }
+  }
+
   return appointmentToDebt(updated as any);
 }
 
