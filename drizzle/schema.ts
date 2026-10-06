@@ -86,6 +86,12 @@ export const customers = mysqlTable("customers", {
   clientType: clientTypeEnum.default("particular").notNull(),
   companyName: varchar("companyName", { length: 160 }),
   clientTaxId: varchar("clientTaxId", { length: 40 }), // RUC, siempre opcional
+  /** Garaje JSON: [{id,type,model,plate}] */
+  vehiclesJson: text("vehiclesJson"),
+  /** Créditos de lavado gratis acumulados (fidelización). */
+  freeWashCredits: int("freeWashCredits").notNull().default(0),
+  lastWashAt: varchar("lastWashAt", { length: 10 }),
+  lastReminderAt: timestamp("lastReminderAt"),
   lastUsedAt: timestamp("lastUsedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -140,6 +146,9 @@ export const appointments = mysqlTable("appointments", {
   
   // Origen del alta (interno o futuro portal cliente)
   source: mysqlEnum("source", ["interno_manual", "portal_cliente"]).default("interno_manual").notNull(),
+
+  /** 1 = turno con lavado gratis por fidelización */
+  loyaltyFree: int("loyaltyFree").notNull().default(0),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

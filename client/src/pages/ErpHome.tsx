@@ -6,6 +6,7 @@ import {
   HandCoins,
   LayoutDashboard,
   LayoutGrid,
+  MessageCircle,
   Package,
   Truck,
   Users,
@@ -17,6 +18,7 @@ import { PayrollPanel } from "@/components/PayrollPanel";
 import { InventoryPanel } from "@/components/InventoryPanel";
 import { SuppliersPanel } from "@/components/SuppliersPanel";
 import { ReceivablesPanel } from "@/components/ReceivablesPanel";
+import { ReengagePanel } from "@/components/ReengagePanel";
 
 type ErpModule =
   | "hub"
@@ -25,7 +27,8 @@ type ErpModule =
   | "personal"
   | "inventario"
   | "proveedores"
-  | "deudores";
+  | "deudores"
+  | "recontacto";
 
 const MODULES: Array<{
   id: Exclude<ErpModule, "hub">;
@@ -90,15 +93,26 @@ const MODULES: Array<{
     icon: HandCoins,
     accent: "text-amber-300 bg-amber-500/15 border-amber-500/30",
   },
+  {
+    id: "recontacto",
+    path: "/erp/recontacto",
+    label: "Recontacto",
+    short: "WA 7d",
+    blurb: "Avisar a los 7 días post-lavado",
+    icon: MessageCircle,
+    accent: "text-emerald-300 bg-emerald-500/15 border-emerald-500/30",
+  },
 ];
 
 function useErpModule(): ErpModule {
+  const [, recontacto] = useRoute("/erp/recontacto");
   const [, deudores] = useRoute("/erp/deudores");
   const [, proveedores] = useRoute("/erp/proveedores");
   const [, inventario] = useRoute("/erp/inventario");
   const [, personal] = useRoute("/erp/personal");
   const [, caja] = useRoute("/erp/caja");
   const [, tablero] = useRoute("/erp/tablero");
+  if (recontacto) return "recontacto";
   if (deudores) return "deudores";
   if (proveedores) return "proveedores";
   if (inventario) return "inventario";
@@ -244,6 +258,7 @@ export default function ErpHome() {
         {module === "inventario" && <InventoryPanel />}
         {module === "proveedores" && <SuppliersPanel />}
         {module === "deudores" && <ReceivablesPanel />}
+        {module === "recontacto" && <ReengagePanel />}
       </main>
 
       <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#080d1a] border-t border-slate-800/90 px-1.5 pt-2 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center gap-0.5 overflow-x-auto no-scrollbar">

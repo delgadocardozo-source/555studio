@@ -32,6 +32,7 @@ import {
   Printer,
   GripVertical,
   Briefcase,
+  CalendarPlus,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -874,7 +875,19 @@ export default function Home() {
       companyName: customer.companyName || prev.companyName || "",
       clientTaxId: customer.clientTaxId || prev.clientTaxId || "",
     }));
-    toast.success("Datos del cliente y RUC cargados");
+    const garage = Array.isArray(customer.vehicles) ? customer.vehicles : [];
+    if (garage.length > 0) {
+      setFormVehicles(
+        garage.map((v: any) => ({
+          type: v.type === "camioneta" ? "camioneta" : "auto",
+          model: v.model || "",
+          plate: v.plate || "",
+        }))
+      );
+      toast.success(`Cliente + garaje (${garage.length} veh.) cargados`);
+    } else {
+      toast.success("Datos del cliente y RUC cargados");
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1198,6 +1211,13 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <Link
+              href="/agendar"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 active:scale-95"
+            >
+              <CalendarPlus className="w-3.5 h-3.5" />
+              Agendar
+            </Link>
             <Link
               href="/erp"
               className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-bold text-sky-200 hover:bg-sky-500/20 active:scale-95"
@@ -2133,11 +2153,17 @@ export default function Home() {
                   </div>
                 </div>
 
+                <Link
+                  href="/agendar"
+                  className="block w-full text-center bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-lg shadow-emerald-600/30 active:scale-95 touch-manipulation"
+                >
+                  Ir a agendar (cliente / operador)
+                </Link>
                 <button
                   onClick={() => handleOpenCreateModal()}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-lg shadow-red-600/30 cursor-pointer active:scale-95 touch-manipulation"
+                  className="w-full border border-slate-700 text-slate-200 font-bold text-xs py-3 rounded-xl transition-all active:scale-95 touch-manipulation"
                 >
-                  Probar Reserva con GPS
+                  Alta rápida (modal interno)
                 </button>
               </div>
             </div>
