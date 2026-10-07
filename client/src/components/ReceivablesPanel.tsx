@@ -40,9 +40,10 @@ export function ReceivablesPanel() {
 
   const payMut = trpc.receivables.markPaid.useMutation({
     onSuccess: () => {
-      toast.success("Cobro registrado en la agenda");
+      toast.success("Cobro registrado en la agenda y en caja");
       utils.receivables.invalidate();
       utils.appointments.invalidate();
+      utils.cashLedger.invalidate();
       setPayModal(null);
     },
     onError: (err) => toast.error(err.message || "No se pudo cobrar"),

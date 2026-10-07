@@ -669,7 +669,7 @@ export const appRouter = router({
   }),
 
   /**
-   * Libro de caja — independiente del cobro de turnos.
+   * Libro de caja. Los cobros marcados como pagados en la agenda entran solos.
    * Ingresos / egresos con responsable (persona) y filtros.
    */
   cashLedger: router({
