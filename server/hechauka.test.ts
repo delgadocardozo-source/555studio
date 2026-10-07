@@ -144,6 +144,8 @@ describe("Hechauka y presentación mensual", () => {
         ],
       })
     );
+    const ventasBytes = pkg.files.find((item) => item.name === "hechauka-ventas-202610.txt")!.bytes;
+    expect(ventasBytes[0]).toBe(0x31);
     const rows = parseTsv(textOf(pkg, "hechauka-ventas-202610.txt"));
     const header = rows[0];
     const details = rows.slice(1);
@@ -247,6 +249,8 @@ describe("Hechauka y presentación mensual", () => {
     const source = monthBooks({ purchases: [good, exemptOnly, noTimbrado, badNumber] });
     expect(ledgerTotals(source.ledger).debit).toBe(ledgerTotals(source.ledger).credit);
     const pkg = buildMonthPackage(source);
+    const comprasBytes = pkg.files.find((item) => item.name === "hechauka-compras-202610.txt")!.bytes;
+    expect(comprasBytes[0]).toBe(0x31);
     const rows = parseTsv(textOf(pkg, "hechauka-compras-202610.txt"));
     const header = rows[0];
     const details = rows.slice(1);
@@ -271,8 +275,9 @@ describe("Hechauka y presentación mensual", () => {
     expect(textOf(pkg, "hechauka-compras-202610.txt")).not.toContain("Sin Timbre");
     expect(textOf(pkg, "hechauka-compras-202610.txt")).not.toContain("\t123\t");
 
+    const comprasFile = pkg.files.find((item) => item.name === "compras-202610.csv")!;
+    expect(Array.from(comprasFile.bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
     const comprasCsv = textOf(pkg, "compras-202610.csv");
-    expect(comprasCsv.charCodeAt(0)).toBe(0xfeff);
     expect(comprasCsv).toContain("Sin Timbre");
     expect(comprasCsv).toContain("123");
     expect(comprasCsv).toContain("Química SA");

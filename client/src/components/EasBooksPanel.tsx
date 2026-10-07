@@ -81,9 +81,9 @@ export function EasBooksPanel() {
   function downloadPresentation() {
     if (!preview) return;
     const bytes = buildStoreZip(preview.files);
-    const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], {
-      type: "application/zip",
-    });
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    const blob = new Blob([buffer], { type: "application/zip" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
