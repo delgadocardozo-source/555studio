@@ -100,6 +100,66 @@ describe("reengage", () => {
     expect(candidates[0].clientName).toBe("Ana");
   });
 
+  it("sigue en la lista si ya se le escribió y no reservó", () => {
+    const today = "2026-10-15";
+    const normalizePhoneKey = (p: string) => {
+      const d = p.replace(/\D/g, "").replace(/^0/, "");
+      return d.startsWith("595") ? d : `595${d}`;
+    };
+    const candidates = selectReengageCandidates({
+      today,
+      appointments: [
+        {
+          clientPhone: "0981111222",
+          clientName: "Ana",
+          scheduledDate: "2026-09-20",
+          status: "finalizado",
+        },
+      ],
+      customers: [
+        {
+          phoneKey: "595981111222",
+          clientName: "Ana",
+          clientPhone: "0981111222",
+          lastReminderAt: "2026-10-14T15:00:00.000Z",
+        },
+      ],
+      normalizePhoneKey,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].lastReminderAt).toContain("2026-10-14");
+    expect(candidates[0].daysSinceWash).toBeGreaterThan(7);
+  });
+
+  it("sale de la lista solo cuando tiene un turno nuevo", () => {
+    const today = "2026-10-15";
+    const candidates = selectReengageCandidates({
+      today,
+      appointments: [
+        {
+          clientPhone: "0981111222",
+          clientName: "Ana",
+          scheduledDate: "2026-10-01",
+          status: "finalizado",
+        },
+        {
+          clientPhone: "0981111222",
+          clientName: "Ana",
+          scheduledDate: "2026-10-18",
+          status: "pendiente",
+        },
+      ],
+      customers: [
+        { phoneKey: "595981111222", clientName: "Ana", clientPhone: "0981111222" },
+      ],
+      normalizePhoneKey: (p) => {
+        const d = p.replace(/\D/g, "").replace(/^0/, "");
+        return d.startsWith("595") ? d : `595${d}`;
+      },
+    });
+    expect(candidates).toHaveLength(0);
+  });
+
   it("incluye link de reserva online en el mensaje WA", () => {
     const text = buildReengageWhatsAppText({
       clientName: "Soleyl Pérez",

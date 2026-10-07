@@ -31,6 +31,7 @@ import * as suppliersDb from "./suppliersDb";
 import * as receivablesDb from "./receivablesDb";
 import * as washRecipeDb from "./washRecipeDb";
 import * as erpControlDb from "./erpControlDb";
+import * as invoicingDb from "./invoicingDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
 import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
@@ -687,7 +688,7 @@ export const appRouter = router({
   }),
 
   /**
-   * Libro de caja — independiente del cobro de turnos.
+   * Libro de caja. Los cobros marcados como pagados en la agenda entran solos.
    * Ingresos / egresos con responsable (persona) y filtros.
    */
   cashLedger: router({
@@ -1142,6 +1143,45 @@ export const appRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: err?.message || "No se pudo marcar el cobro",
+          });
+        }
+      }),
+  }),
+
+  /**
+   * Facturación operativa: un comprobante por lavado finalizado.
+   * El cobro no se duplica: sigue en el turno (pagado / falta pagar).
+   */
+  billing: router({
+    list: publicProcedure.query(async () => await invoicingDb.listInvoices()),
+    stats: publicProcedure.query(async () => await invoicingDb.getInvoiceStats()),
+    billable: publicProcedure.query(async () => await invoicingDb.listBillableAppointments()),
+    issue: publicProcedure
+      .input(
+        z.object({
+          appointmentId: z.number().int(),
+          issuedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await invoicingDb.issueInvoice(input.appointmentId, input.issuedDate);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo emitir el comprobante",
+          });
+        }
+      }),
+    void: publicProcedure
+      .input(z.object({ id: z.number().int(), reason: z.string().min(3) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await invoicingDb.voidInvoice(input.id, input.reason);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo anular el comprobante",
           });
         }
       }),

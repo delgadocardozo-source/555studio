@@ -1,4 +1,4 @@
-/** Tipos y helpers del módulo de caja (ingresos / egresos). Independiente de la agenda. */
+/** Tipos y helpers del módulo de caja (ingresos / egresos). */
 
 export type CashMovementType = "ingreso" | "egreso";
 
@@ -14,6 +14,7 @@ export const CASH_EGRESO_CATEGORIES = [
 
 export const CASH_INGRESO_CATEGORIES = [
   "Aporte",
+  "Cobro agenda",
   "Cobro manual",
   "Reintegro",
   "Otros",

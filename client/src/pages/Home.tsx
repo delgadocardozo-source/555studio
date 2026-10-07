@@ -580,9 +580,15 @@ export default function Home() {
   });
 
   const finalizeMutation = trpc.appointments.finalizeWithPayment.useMutation({
-    onSuccess: () => {
-      toast.success("Servicio finalizado y cobro registrado");
+    onSuccess: (updated) => {
+      toast.success(
+        updated?.paymentStatus === "pagado"
+          ? "Servicio finalizado. El cobro quedó en caja."
+          : "Servicio finalizado. Queda por cobrar."
+      );
       utils.appointments.invalidate();
+      utils.cashLedger.invalidate();
+      utils.receivables.invalidate();
       setIsFinalizeModalOpen(false);
       setIsDetailOpen(false);
     },

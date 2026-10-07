@@ -50,6 +50,15 @@ export async function markDebtPaid(params: {
   if (!existing) throw new Error("Turno no encontrado");
   if (existing.status === "cancelado") throw new Error("El turno está cancelado");
   if (existing.paymentStatus === "pagado") {
+    const { syncAgendaPaymentToCash } = await import("./agendaCashSync");
+    await syncAgendaPaymentToCash({
+      code: String(existing.code || `#${existing.id}`),
+      clientName: String(existing.clientName || ""),
+      amount: Number(existing.servicePrice) || 0,
+      paymentStatus: "pagado",
+      paymentMethod: existing.paymentMethod === "comprobante_digital" ? "comprobante_digital" : "efectivo",
+      scheduledDate: String(existing.scheduledDate || ""),
+    });
     return appointmentToDebt(existing as any);
   }
   if (existing.paymentStatus !== "falta_pagar") {
@@ -63,31 +72,6 @@ export async function markDebtPaid(params: {
     paymentReceiptUrl: params.paymentReceiptUrl ?? null,
     paymentReceiptName: params.paymentReceiptName ?? null,
   });
-
-  // Best practice: cobranza de agenda → posteo en caja (efectivo), idempotente.
-  if (params.paymentMethod === "efectivo") {
-    try {
-      const { createCashMovement, listCashMovements } = await import("./cashLedgerDb");
-      const code = String(existing.code || `#${existing.id}`);
-      const tag = `[AGENDA:${code}]`;
-      const already = await listCashMovements({ search: tag });
-      if (already.length === 0) {
-        const amount = Math.max(0, Math.round(Number(existing.servicePrice) || 0));
-        if (amount > 0) {
-          await createCashMovement({
-            type: "ingreso",
-            amount,
-            movementDate: String(existing.scheduledDate || new Date().toISOString().slice(0, 10)),
-            person: String(existing.clientName || "Cliente"),
-            category: "Cobro manual",
-            description: `Cobro agenda ${code} · ${existing.clientName || ""} ${tag}`.trim(),
-          });
-        }
-      }
-    } catch (err) {
-      console.error("[erp] posteo caja al cobrar falló", err);
-    }
-  }
 
   return appointmentToDebt(updated as any);
 }

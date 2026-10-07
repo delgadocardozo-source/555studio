@@ -7,6 +7,7 @@ import {
   HandCoins,
   LayoutDashboard,
   Package,
+  Receipt,
   Scale,
   Sparkles,
   Users,
@@ -258,6 +259,7 @@ export function ErpControlPanel() {
                 [
                   ["/erp/tablero", "Tablero ops", LayoutDashboard, "sky"],
                   ["/erp/caja", "Caja", Wallet, "emerald"],
+                  ["/erp/facturacion", "Facturación", Receipt, "sky"],
                   ["/erp/clientes", "Clientes", Users, "violet"],
                   ["/erp/deudores", "Deudores", HandCoins, "amber"],
                 ] as const

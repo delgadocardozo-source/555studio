@@ -9,11 +9,13 @@ import {
   MessageCircle,
   Package,
   Sparkles,
+  Receipt,
   Truck,
   Users,
   Wallet,
 } from "lucide-react";
 import { CashLedgerPanel } from "@/components/CashLedgerPanel";
+import { BillingPanel } from "@/components/BillingPanel";
 import { ManagerialDashboard } from "@/components/ManagerialDashboard";
 import { PayrollPanel } from "@/components/PayrollPanel";
 import { InventoryPanel } from "@/components/InventoryPanel";
@@ -27,6 +29,7 @@ type ErpModule =
   | "control"
   | "tablero"
   | "caja"
+  | "facturacion"
   | "personal"
   | "inventario"
   | "proveedores"
@@ -75,6 +78,16 @@ const MODULES: Array<{
     domain: "finanzas",
     icon: Wallet,
     accent: "text-emerald-300 bg-emerald-500/15 border-emerald-500/30",
+  },
+  {
+    id: "facturacion",
+    path: "/erp/facturacion",
+    label: "Facturación",
+    short: "Factura",
+    blurb: "Comprobante por lavado · IVA incluido",
+    domain: "finanzas",
+    icon: Receipt,
+    accent: "text-sky-300 bg-sky-500/15 border-sky-500/30",
   },
   {
     id: "deudores",
@@ -153,6 +166,7 @@ function useErpModule(): ErpModule {
   const [, proveedores] = useRoute("/erp/proveedores");
   const [, inventario] = useRoute("/erp/inventario");
   const [, personal] = useRoute("/erp/personal");
+  const [, facturacion] = useRoute("/erp/facturacion");
   const [, caja] = useRoute("/erp/caja");
   const [, tablero] = useRoute("/erp/tablero");
   if (clientes) return "clientes";
@@ -161,6 +175,7 @@ function useErpModule(): ErpModule {
   if (proveedores) return "proveedores";
   if (inventario) return "inventario";
   if (personal) return "personal";
+  if (facturacion) return "facturacion";
   if (caja) return "caja";
   if (tablero) return "tablero";
   return "control";
@@ -289,6 +304,7 @@ export default function ErpHome() {
         )}
         {module === "tablero" && <ManagerialDashboard />}
         {module === "caja" && <CashLedgerPanel />}
+        {module === "facturacion" && <BillingPanel />}
         {module === "personal" && <PayrollPanel />}
         {module === "inventario" && <InventoryPanel />}
         {module === "proveedores" && <SuppliersPanel />}
