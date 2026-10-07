@@ -294,11 +294,29 @@ export interface UpsertCustomerProfileParams {
   vehicles?: CustomerVehicleInput[] | null;
   /** Si true, reemplaza el garaje completo; si false/omit, mergea. */
   replaceVehicles?: boolean;
+  /**
+   * Teléfono anterior cuando se edita la ficha y cambia el WhatsApp.
+   * Sin esto, un teléfono nuevo crea otra ficha.
+   */
+  previousPhone?: string | null;
+  /** La ficha manda: empresa y RUC vacíos se borran (no se conservan). */
+  replaceProfile?: boolean;
+}
+
+function profileText(
+  incoming: string | null | undefined,
+  previous: string | null | undefined,
+  replaceProfile: boolean
+) {
+  if (replaceProfile) return incoming?.trim() || null;
+  return incoming?.trim() || previous || null;
 }
 
 export async function upsertCustomerProfile(params: UpsertCustomerProfileParams) {
-  const phoneKey = normalizePhoneKey(params.clientPhone);
-  if (!phoneKey) return null;
+  const nextKey = normalizePhoneKey(params.clientPhone);
+  if (!nextKey) throw new Error("WhatsApp inválido");
+  const lookupKey = normalizePhoneKey(params.previousPhone || "") || nextKey;
+  const replaceProfile = Boolean(params.replaceProfile);
 
   const incomingVehicles = params.vehicles
     ? sanitizeCustomerVehicles(params.vehicles)
@@ -306,7 +324,13 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
 
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
-    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
+    if (nextKey !== lookupKey && rows.some((row) => row.phoneKey === nextKey)) {
+      throw new Error("Ya existe un cliente con ese WhatsApp");
+    }
+    const index = rows.findIndex((row) => row.phoneKey === lookupKey);
+    if (index < 0 && params.previousPhone?.trim()) {
+      throw new Error("No se encontró el cliente a editar");
+    }
     const nowIso = new Date().toISOString();
     if (index >= 0) {
       const prevVehicles = parseVehiclesJson(rows[index].vehiclesJson ?? rows[index].vehicles);
@@ -318,12 +342,12 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
             : mergeGarageVehicles(prevVehicles, incomingVehicles);
       rows[index] = {
         ...rows[index],
-        phoneKey,
+        phoneKey: nextKey,
         clientName: params.clientName.trim(),
         clientPhone: params.clientPhone.trim(),
         clientType: params.clientType,
-        companyName: params.companyName?.trim() || rows[index].companyName || null,
-        clientTaxId: params.clientTaxId?.trim() || rows[index].clientTaxId || null,
+        companyName: profileText(params.companyName, rows[index].companyName, replaceProfile),
+        clientTaxId: profileText(params.clientTaxId, rows[index].clientTaxId, replaceProfile),
         vehiclesJson: JSON.stringify(vehicles),
         vehicles,
         freeWashCredits: Number(rows[index].freeWashCredits) || 0,
@@ -336,7 +360,7 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
 
     const vehicles = incomingVehicles || [];
     const created = {
-      phoneKey,
+      phoneKey: nextKey,
       clientName: params.clientName.trim(),
       clientPhone: params.clientPhone.trim(),
       clientType: params.clientType,
@@ -360,7 +384,15 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
   const db = await getDb();
   if (!db) return null;
 
-  const existing = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  if (nextKey !== lookupKey) {
+    const clash = await db.select().from(customers).where(eq(customers.phoneKey, nextKey)).limit(1);
+    if (clash[0]) throw new Error("Ya existe un cliente con ese WhatsApp");
+  }
+
+  const existing = await db.select().from(customers).where(eq(customers.phoneKey, lookupKey)).limit(1);
+  if (!existing[0] && params.previousPhone?.trim()) {
+    throw new Error("No se encontró el cliente a editar");
+  }
   const prevVehicles = existing[0] ? parseVehiclesJson(existing[0].vehiclesJson) : [];
   const vehicles =
     incomingVehicles == null
@@ -370,30 +402,29 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
         : mergeGarageVehicles(prevVehicles, incomingVehicles);
 
   const payload = {
-    phoneKey,
+    phoneKey: nextKey,
     clientName: params.clientName.trim(),
     clientPhone: params.clientPhone.trim(),
     clientType: params.clientType,
-    companyName: params.companyName?.trim() || null,
-    clientTaxId: params.clientTaxId?.trim() || null,
+    companyName: profileText(params.companyName, existing[0]?.companyName, replaceProfile),
+    clientTaxId: profileText(params.clientTaxId, existing[0]?.clientTaxId, replaceProfile),
     vehiclesJson: JSON.stringify(vehicles),
     lastUsedAt: new Date(),
   };
 
-  await db.insert(customers).values(payload).onDuplicateKeyUpdate({
-    set: {
-      clientName: payload.clientName,
-      clientPhone: payload.clientPhone,
-      clientType: payload.clientType,
-      companyName: payload.companyName,
-      clientTaxId: payload.clientTaxId || sql`COALESCE(values(clientTaxId), customers.clientTaxId)`,
-      vehiclesJson: payload.vehiclesJson,
-      lastUsedAt: new Date(),
-      updatedAt: new Date(),
-    },
-  });
+  if (existing[0]) {
+    await db
+      .update(customers)
+      .set({
+        ...payload,
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.phoneKey, lookupKey));
+  } else {
+    await db.insert(customers).values(payload);
+  }
 
-  const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  const matched = await db.select().from(customers).where(eq(customers.phoneKey, nextKey)).limit(1);
   return matched[0] ? hydrateCustomer(matched[0]) : null;
 }
 
@@ -437,7 +468,8 @@ function hydrateCustomer(row: StoredCustomer | Customer): HydratedCustomer {
   } as HydratedCustomer;
 }
 
-export async function searchCustomers(query: string = "") {
+export async function searchCustomers(query: string = "", limit = 20) {
+  const take = Math.min(200, Math.max(1, limit));
   const clean = query.trim().toLowerCase();
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
@@ -445,7 +477,7 @@ export async function searchCustomers(query: string = "") {
     if (!clean) {
       return mapped
         .sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || "")))
-        .slice(0, 20);
+        .slice(0, take);
     }
     return mapped
       .filter((row) => {
@@ -456,14 +488,14 @@ export async function searchCustomers(query: string = "") {
         return full.includes(clean);
       })
       .sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || "")))
-      .slice(0, 20);
+      .slice(0, take);
   }
 
   const db = await getDb();
   if (!db) return [];
 
   if (!clean) {
-    const rows = await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(20);
+    const rows = await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(take);
     return rows.map(hydrateCustomer);
   }
 
@@ -481,7 +513,7 @@ export async function searchCustomers(query: string = "") {
       )
     )
     .orderBy(desc(customers.lastUsedAt))
-    .limit(20);
+    .limit(take);
   return rows.map(hydrateCustomer);
 }
 

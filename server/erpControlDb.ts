@@ -57,7 +57,7 @@ export async function listCustomerCrm(params?: {
 }): Promise<CustomerCrmCard[]> {
   const limit = params?.limit ?? 40;
   const [customers, appointments, openDebts] = await Promise.all([
-    agendaDb.searchCustomers(params?.query || ""),
+    agendaDb.searchCustomers(params?.query || "", params?.limit ?? 80),
     agendaDb.listAppointments({}),
     receivablesDb.listOpenDebts(),
   ]);
