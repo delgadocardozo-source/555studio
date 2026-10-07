@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   MessageCircle,
   Package,
+  Scale,
   Sparkles,
   Receipt,
   Truck,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { CashLedgerPanel } from "@/components/CashLedgerPanel";
 import { BillingPanel } from "@/components/BillingPanel";
+import { EasBooksPanel } from "@/components/EasBooksPanel";
 import { ManagerialDashboard } from "@/components/ManagerialDashboard";
 import { PayrollPanel } from "@/components/PayrollPanel";
 import { InventoryPanel } from "@/components/InventoryPanel";
@@ -30,6 +32,7 @@ type ErpModule =
   | "tablero"
   | "caja"
   | "facturacion"
+  | "contabilidad"
   | "personal"
   | "inventario"
   | "proveedores"
@@ -87,6 +90,16 @@ const MODULES: Array<{
     blurb: "Comprobante por lavado · IVA incluido",
     domain: "finanzas",
     icon: Receipt,
+    accent: "text-sky-300 bg-sky-500/15 border-sky-500/30",
+  },
+  {
+    id: "contabilidad",
+    path: "/erp/contabilidad",
+    label: "Contabilidad",
+    short: "Libros",
+    blurb: "EAS · libros y presentación del mes",
+    domain: "finanzas",
+    icon: Scale,
     accent: "text-sky-300 bg-sky-500/15 border-sky-500/30",
   },
   {
@@ -166,6 +179,7 @@ function useErpModule(): ErpModule {
   const [, proveedores] = useRoute("/erp/proveedores");
   const [, inventario] = useRoute("/erp/inventario");
   const [, personal] = useRoute("/erp/personal");
+  const [, contabilidad] = useRoute("/erp/contabilidad");
   const [, facturacion] = useRoute("/erp/facturacion");
   const [, caja] = useRoute("/erp/caja");
   const [, tablero] = useRoute("/erp/tablero");
@@ -175,6 +189,7 @@ function useErpModule(): ErpModule {
   if (proveedores) return "proveedores";
   if (inventario) return "inventario";
   if (personal) return "personal";
+  if (contabilidad) return "contabilidad";
   if (facturacion) return "facturacion";
   if (caja) return "caja";
   if (tablero) return "tablero";
@@ -305,6 +320,7 @@ export default function ErpHome() {
         {module === "tablero" && <ManagerialDashboard />}
         {module === "caja" && <CashLedgerPanel />}
         {module === "facturacion" && <BillingPanel />}
+        {module === "contabilidad" && <EasBooksPanel />}
         {module === "personal" && <PayrollPanel />}
         {module === "inventario" && <InventoryPanel />}
         {module === "proveedores" && <SuppliersPanel />}

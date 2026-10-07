@@ -302,6 +302,42 @@ export const washStockConsumptions = mysqlTable("wash_stock_consumptions", {
   consumedAt: timestamp("consumedAt").defaultNow().notNull(),
 });
 
+/** Ficha fiscal de la EAS. Una sola empresa. */
+export const easRegimeEnum = mysqlEnum("easRegime", ["resimple", "simple", "general"]);
+
+export const easProfiles = mysqlTable("eas_profiles", {
+  id: int("id").autoincrement().primaryKey(),
+  legalName: varchar("legalName", { length: 180 }).notNull(),
+  ruc: varchar("ruc", { length: 40 }).notNull(),
+  regime: easRegimeEnum.notNull().default("simple"),
+  activity: varchar("activity", { length: 180 }).notNull(),
+  repName: varchar("repName", { length: 180 }).notNull().default(""),
+  repRuc: varchar("repRuc", { length: 40 }).notNull().default(""),
+  timbrado: varchar("timbrado", { length: 20 }).notNull().default(""),
+  establecimiento: varchar("establecimiento", { length: 3 }).notNull().default("001"),
+  puntoExpedicion: varchar("puntoExpedicion", { length: 3 }).notNull().default("001"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Libro de compras: comprobante del proveedor, base imponible sin IVA. */
+export const easPurchases = mysqlTable("eas_purchases", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseDate: varchar("purchaseDate", { length: 10 }).notNull(),
+  supplierName: varchar("supplierName", { length: 160 }).notNull(),
+  supplierRuc: varchar("supplierRuc", { length: 40 }),
+  voucherNumber: varchar("voucherNumber", { length: 40 }).notNull(),
+  timbrado: varchar("timbrado", { length: 20 }).notNull().default(""),
+  description: text("description"),
+  taxed10: int("taxed10").notNull().default(0),
+  iva10: int("iva10").notNull().default(0),
+  taxed5: int("taxed5").notNull().default(0),
+  iva5: int("iva5").notNull().default(0),
+  exempt: int("exempt").notNull().default(0),
+  total: int("total").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 /**
  * Comprobantes de servicio (facturación operativa).
  * Un turno finalizado tiene como máximo un comprobante vigente.

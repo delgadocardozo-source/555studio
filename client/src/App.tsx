@@ -17,6 +17,7 @@ function Router() {
       <Route path="/erp/tablero" component={ErpHome} />
       <Route path="/erp/caja" component={ErpHome} />
       <Route path="/erp/facturacion" component={ErpHome} />
+      <Route path="/erp/contabilidad" component={ErpHome} />
       <Route path="/erp/personal" component={ErpHome} />
       <Route path="/erp/inventario" component={ErpHome} />
       <Route path="/erp/proveedores" component={ErpHome} />
