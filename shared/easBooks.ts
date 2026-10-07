@@ -11,6 +11,15 @@ export interface EasProfile {
   regime: EasRegime;
   /** Actividad declarada. */
   activity: string;
+  /** Representante legal: la EAS es persona jurídica y Hechauka lo exige. */
+  repName: string;
+  repRuc: string;
+  /** Timbrado de las facturas de venta. 8 dígitos o más. */
+  timbrado: string;
+  /** Establecimiento de 3 dígitos, ej. 001. */
+  establecimiento: string;
+  /** Punto de expedición de 3 dígitos, ej. 001. */
+  puntoExpedicion: string;
   updatedAt: string;
 }
 
@@ -29,6 +38,8 @@ export interface EasPurchaseInput {
   supplierName: string;
   supplierRuc?: string;
   voucherNumber: string;
+  /** Timbrado del proveedor, para el libro de compras de Hechauka. */
+  timbrado?: string;
   description?: string;
   /** Gravado IVA 10%, sin el impuesto. */
   taxed10?: number;
@@ -43,6 +54,7 @@ export interface EasPurchase {
   supplierName: string;
   supplierRuc: string;
   voucherNumber: string;
+  timbrado: string;
   description: string;
   taxed10: number;
   iva10: number;
@@ -120,6 +132,11 @@ export function normalizeEasProfile(input: Partial<EasProfile> | null | undefine
     ruc: String(input?.ruc || "").trim(),
     regime,
     activity: String(input?.activity || "Lavado y detallado de vehículos a domicilio").trim(),
+    repName: String(input?.repName || "").trim(),
+    repRuc: String(input?.repRuc || "").trim(),
+    timbrado: String(input?.timbrado || "").replace(/\D/g, ""),
+    establecimiento: String(input?.establecimiento || "001").replace(/\D/g, "").padStart(3, "0").slice(-3),
+    puntoExpedicion: String(input?.puntoExpedicion || "001").replace(/\D/g, "").padStart(3, "0").slice(-3),
     updatedAt: String(input?.updatedAt || ""),
   };
 }
@@ -148,6 +165,7 @@ export function buildEasPurchase(
     supplierName,
     supplierRuc: String(input.supplierRuc || "").trim(),
     voucherNumber,
+    timbrado: String(input.timbrado || "").replace(/\D/g, ""),
     description: String(input.description || "").trim(),
     taxed10,
     iva10,

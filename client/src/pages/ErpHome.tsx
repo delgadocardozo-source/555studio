@@ -97,7 +97,7 @@ const MODULES: Array<{
     path: "/erp/contabilidad",
     label: "Contabilidad",
     short: "Libros",
-    blurb: "EAS · diario, IVA e inventario",
+    blurb: "EAS · libros y presentación del mes",
     domain: "finanzas",
     icon: Scale,
     accent: "text-sky-300 bg-sky-500/15 border-sky-500/30",

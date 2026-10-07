@@ -39,7 +39,12 @@ async function readBlob(): Promise<EasBlob> {
     const parsed = JSON.parse(await new Response(result.stream).text()) as EasBlob;
     return {
       profile: parsed.profile || null,
-      purchases: Array.isArray(parsed.purchases) ? parsed.purchases : [],
+      purchases: Array.isArray(parsed.purchases)
+        ? parsed.purchases.map((row) => ({
+            ...row,
+            timbrado: String(row.timbrado || "").replace(/\D/g, ""),
+          }))
+        : [],
     };
   } catch {
     return { profile: null, purchases: [] };
@@ -56,6 +61,11 @@ async function writeBlob(data: EasBlob) {
   });
 }
 
+function sqlTimestamp(value: Date | string | null | undefined): string {
+  if (value instanceof Date) return value.toISOString();
+  return String(value || "");
+}
+
 function purchaseFromSql(row: typeof easPurchases.$inferSelect): EasPurchase {
   return {
     id: row.id,
@@ -63,6 +73,7 @@ function purchaseFromSql(row: typeof easPurchases.$inferSelect): EasPurchase {
     supplierName: row.supplierName,
     supplierRuc: row.supplierRuc || "",
     voucherNumber: row.voucherNumber,
+    timbrado: String(row.timbrado || "").replace(/\D/g, ""),
     description: row.description || "",
     taxed10: row.taxed10,
     iva10: row.iva10,
@@ -70,7 +81,7 @@ function purchaseFromSql(row: typeof easPurchases.$inferSelect): EasPurchase {
     iva5: row.iva5,
     exempt: row.exempt,
     total: row.total,
-    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt || ""),
+    createdAt: sqlTimestamp(row.createdAt),
   };
 }
 
@@ -89,7 +100,12 @@ export async function getEasProfile(): Promise<EasProfile> {
     ruc: row.ruc,
     regime: row.regime,
     activity: row.activity,
-    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt || ""),
+    repName: row.repName,
+    repRuc: row.repRuc,
+    timbrado: row.timbrado,
+    establecimiento: row.establecimiento,
+    puntoExpedicion: row.puntoExpedicion,
+    updatedAt: sqlTimestamp(row.updatedAt),
   });
 }
 
@@ -114,6 +130,11 @@ export async function saveEasProfile(input: Partial<EasProfile>): Promise<EasPro
         ruc: next.ruc,
         regime: next.regime,
         activity: next.activity,
+        repName: next.repName,
+        repRuc: next.repRuc,
+        timbrado: next.timbrado,
+        establecimiento: next.establecimiento,
+        puntoExpedicion: next.puntoExpedicion,
       })
       .where(eq(easProfiles.id, existing[0].id));
   } else {
@@ -122,6 +143,11 @@ export async function saveEasProfile(input: Partial<EasProfile>): Promise<EasPro
       ruc: next.ruc,
       regime: next.regime,
       activity: next.activity,
+      repName: next.repName,
+      repRuc: next.repRuc,
+      timbrado: next.timbrado,
+      establecimiento: next.establecimiento,
+      puntoExpedicion: next.puntoExpedicion,
     });
   }
   return next;
@@ -153,6 +179,7 @@ export async function addEasPurchase(input: EasPurchaseInput): Promise<EasPurcha
     supplierName: draft.supplierName,
     supplierRuc: draft.supplierRuc || null,
     voucherNumber: draft.voucherNumber,
+    timbrado: draft.timbrado,
     description: draft.description || null,
     taxed10: draft.taxed10,
     iva10: draft.iva10,

@@ -1182,6 +1182,11 @@ export const appRouter = router({
           ruc: z.string().min(3),
           regime: z.enum(["resimple", "simple", "general"]),
           activity: z.string().min(2),
+          repName: z.string().optional(),
+          repRuc: z.string().optional(),
+          timbrado: z.string().optional(),
+          establecimiento: z.string().optional(),
+          puntoExpedicion: z.string().optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -1202,6 +1207,7 @@ export const appRouter = router({
           supplierName: z.string().min(2),
           supplierRuc: z.string().optional(),
           voucherNumber: z.string().min(1),
+          timbrado: z.string().optional(),
           description: z.string().optional(),
           taxed10: z.number().int().nonnegative().optional(),
           taxed5: z.number().int().nonnegative().optional(),

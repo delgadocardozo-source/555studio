@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from "react";
-import { BookOpen, Scale } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { BookOpen, Download, Scale } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { formatGs } from "@shared/cashLedger";
+import { buildMonthPackage } from "@shared/hechauka";
+import { buildStoreZip } from "@shared/storeZip";
 
 function thisMonth() {
   return new Date().toISOString().slice(0, 7);
@@ -21,9 +23,15 @@ export function EasBooksPanel() {
   const [ruc, setRuc] = useState("");
   const [regime, setRegime] = useState<"resimple" | "simple" | "general">("simple");
   const [activity, setActivity] = useState("Lavado y detallado de vehículos a domicilio");
+  const [repName, setRepName] = useState("");
+  const [repRuc, setRepRuc] = useState("");
+  const [timbrado, setTimbrado] = useState("");
+  const [establecimiento, setEstablecimiento] = useState("001");
+  const [puntoExpedicion, setPuntoExpedicion] = useState("001");
   const [supplierName, setSupplierName] = useState("");
   const [supplierRuc, setSupplierRuc] = useState("");
   const [voucherNumber, setVoucherNumber] = useState("");
+  const [purchaseTimbrado, setPurchaseTimbrado] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
   const [taxed10, setTaxed10] = useState("");
   const [taxed5, setTaxed5] = useState("");
@@ -34,10 +42,15 @@ export function EasBooksPanel() {
   useEffect(() => {
     const profile = books.data?.profile;
     if (!profile) return;
-    if (profile.legalName) setLegalName(profile.legalName);
-    if (profile.ruc) setRuc(profile.ruc);
+    setLegalName(profile.legalName || "");
+    setRuc(profile.ruc || "");
     setRegime(profile.regime);
-    if (profile.activity) setActivity(profile.activity);
+    setActivity(profile.activity || "");
+    setRepName(profile.repName || "");
+    setRepRuc(profile.repRuc || "");
+    setTimbrado(profile.timbrado || "");
+    setEstablecimiento(profile.establecimiento || "001");
+    setPuntoExpedicion(profile.puntoExpedicion || "001");
   }, [books.data?.profile]);
 
   const saveProfile = trpc.eas.saveProfile.useMutation({
@@ -53,6 +66,7 @@ export function EasBooksPanel() {
       toast.success("Compra registrada en el libro");
       setSupplierName("");
       setVoucherNumber("");
+      setPurchaseTimbrado("");
       setTaxed10("");
       setTaxed5("");
       setExempt("");
@@ -62,6 +76,28 @@ export function EasBooksPanel() {
   });
 
   const data = books.data;
+  const preview = useMemo(() => (data ? buildMonthPackage(data) : null), [data]);
+
+  function downloadPresentation() {
+    if (!preview) return;
+    const bytes = buildStoreZip(preview.files);
+    const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], {
+      type: "application/zip",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = preview.zipName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success(
+      preview.hechaukaIncluded
+        ? "Presentación del mes descargada"
+        : "Presentación descargada. Los TXT de Hechauka no entraron: el aviso y el LEEME dicen por qué."
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -72,7 +108,8 @@ export function EasBooksPanel() {
         </h2>
         <p className="text-[11px] text-slate-400 mt-0.5 max-w-2xl">
           Libro diario, inventario y posición de IVA armados con lo que ya está en el sistema.
-          No presenta declaraciones ni emite factura electrónica: eso lo cierra el contador en la DNIT.
+          La presentación del mes baja en un ZIP: CSV para revisar y, con la ficha completa, los TXT para importar en Hechauka.
+          El sistema no transmite a la DNIT ni al SIFEN.
         </p>
       </div>
 
@@ -87,11 +124,28 @@ export function EasBooksPanel() {
             <option value="general">General — IVA + IRE general</option>
           </select>
           <input value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="Actividad" className={fieldClass} />
+          <input value={repName} onChange={(e) => setRepName(e.target.value)} placeholder="Representante legal" className={fieldClass} />
+          <input value={repRuc} onChange={(e) => setRepRuc(e.target.value)} placeholder="RUC del representante" className={fieldClass} />
+          <input value={timbrado} onChange={(e) => setTimbrado(e.target.value)} inputMode="numeric" placeholder="Timbrado de las facturas" className={fieldClass} />
+          <input value={establecimiento} onChange={(e) => setEstablecimiento(e.target.value)} inputMode="numeric" placeholder="Establecimiento (001)" className={fieldClass} />
+          <input value={puntoExpedicion} onChange={(e) => setPuntoExpedicion(e.target.value)} inputMode="numeric" placeholder="Punto de expedición (001)" className={fieldClass} />
         </div>
         <button
           type="button"
           disabled={saveProfile.isPending}
-          onClick={() => saveProfile.mutate({ legalName, ruc, regime, activity })}
+          onClick={() =>
+            saveProfile.mutate({
+              legalName,
+              ruc,
+              regime,
+              activity,
+              repName,
+              repRuc,
+              timbrado,
+              establecimiento,
+              puntoExpedicion,
+            })
+          }
           className="text-[11px] font-bold px-3 py-2 rounded-xl bg-sky-600 text-white"
         >
           Guardar ficha
@@ -109,10 +163,47 @@ export function EasBooksPanel() {
         </ul>
       )}
 
-      <label className="flex items-center gap-2 text-[11px] text-slate-400">
-        Mes
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={fieldClass + " max-w-[11rem]"} />
-      </label>
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2">
+        <label className="flex items-center gap-2 text-[11px] text-slate-400">
+          Mes
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={fieldClass + " max-w-[11rem]"} />
+        </label>
+        <button
+          type="button"
+          disabled={!preview}
+          onClick={downloadPresentation}
+          className="inline-flex items-center gap-2 text-[11px] font-bold px-3 py-2 rounded-xl bg-sky-600 text-white disabled:opacity-50"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Descargar presentación del mes
+        </button>
+        <p className="text-[11px] text-slate-500">
+          Usa la ficha guardada y los libros de este mes. Un solo archivo: diario, mayor, inventario, IVA, compras y ventas.
+        </p>
+        {preview && preview.blockers.length > 0 && (
+          <div className="text-[11px] text-amber-100 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-1">
+            <p className="font-bold">La descarga sigue disponible con los CSV. Los TXT de Hechauka (211 y 221) no se arman por esto:</p>
+            <ul className="space-y-0.5">
+              {preview.blockers.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {preview && preview.hechaukaIncluded && (
+          <p className="text-[11px] text-emerald-300">
+            La ficha alcanza: el ZIP incluye hechauka-compras y hechauka-ventas para importar.
+          </p>
+        )}
+        {preview && preview.exclusions.length > 0 && (
+          <div className="text-[11px] text-amber-100/90 space-y-0.5">
+            <p className="font-bold text-amber-200">Comprobantes que no entran al TXT (también están en LEEME):</p>
+            {preview.exclusions.map((item) => (
+              <p key={item}>{item}</p>
+            ))}
+          </div>
+        )}
+      </div>
 
       {data?.iva.applies ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -165,12 +256,14 @@ export function EasBooksPanel() {
         <h3 className="text-xs font-extrabold text-white">Libro de compras</h3>
         <p className="text-[11px] text-slate-500">
           Cargá la base sin IVA, como figura en la factura del proveedor. El sistema calcula el impuesto.
+          Para Hechauka, el número va como 001-001-0000123 y el timbrado del proveedor con 8 dígitos o más.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className={fieldClass} />
           <input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Proveedor" className={fieldClass} />
           <input value={supplierRuc} onChange={(e) => setSupplierRuc(e.target.value)} placeholder="RUC proveedor" className={fieldClass} />
-          <input value={voucherNumber} onChange={(e) => setVoucherNumber(e.target.value)} placeholder="Nº comprobante" className={fieldClass} />
+          <input value={voucherNumber} onChange={(e) => setVoucherNumber(e.target.value)} placeholder="Nº 001-001-0000123" className={fieldClass} />
+          <input value={purchaseTimbrado} onChange={(e) => setPurchaseTimbrado(e.target.value)} inputMode="numeric" placeholder="Timbrado del proveedor" className={fieldClass} />
           <input value={taxed10} onChange={(e) => setTaxed10(e.target.value)} inputMode="numeric" placeholder="Gravado 10%" className={fieldClass} />
           <input value={taxed5} onChange={(e) => setTaxed5(e.target.value)} inputMode="numeric" placeholder="Gravado 5%" className={fieldClass} />
           <input value={exempt} onChange={(e) => setExempt(e.target.value)} inputMode="numeric" placeholder="Exento" className={fieldClass} />
@@ -184,6 +277,7 @@ export function EasBooksPanel() {
               supplierName,
               supplierRuc,
               voucherNumber,
+              timbrado: purchaseTimbrado,
               taxed10: Math.round(Number(taxed10) || 0),
               taxed5: Math.round(Number(taxed5) || 0),
               exempt: Math.round(Number(exempt) || 0),
@@ -198,7 +292,7 @@ export function EasBooksPanel() {
             <div key={row.id} className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 flex justify-between gap-2 text-[11px]">
               <div>
                 <p className="font-bold text-white">{row.supplierName} · {row.voucherNumber}</p>
-                <p className="text-slate-500">{row.date}{row.supplierRuc ? ` · RUC ${row.supplierRuc}` : ""}</p>
+                <p className="text-slate-500">{row.date}{row.supplierRuc ? ` · RUC ${row.supplierRuc}` : ""}{row.timbrado ? ` · timbrado ${row.timbrado}` : ""}</p>
               </div>
               <div className="text-right">
                 <p className="font-bold text-white">{formatGs(row.total)}</p>
