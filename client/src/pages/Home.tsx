@@ -35,6 +35,7 @@ import {
   CalendarPlus,
 } from "lucide-react";
 import { Link } from "wouter";
+import { StaffLogoutButton } from "@/components/StaffGate";
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
@@ -577,14 +578,22 @@ export default function Home() {
 
   const finalizeMutation = trpc.appointments.finalizeWithPayment.useMutation({
     onSuccess: (updated) => {
+      const paid = updated?.paymentStatus === "pagado";
+      const billed = Number(updated?.servicePrice) > 0;
       toast.success(
-        updated?.paymentStatus === "pagado"
-          ? "Servicio finalizado. El cobro quedó en caja."
-          : "Servicio finalizado. Queda por cobrar."
+        paid
+          ? billed
+            ? "Listo. El cobro quedó en caja y el comprobante se emitió."
+            : "Listo. El lavado quedó finalizado."
+          : billed
+            ? "Listo. Queda por cobrar. El comprobante se emitió."
+            : "Listo. Queda por cobrar."
       );
       utils.appointments.invalidate();
       utils.cashLedger.invalidate();
+      utils.cashClose.invalidate();
       utils.receivables.invalidate();
+      utils.billing.invalidate();
       setIsFinalizeModalOpen(false);
       setIsDetailOpen(false);
     },
@@ -1231,6 +1240,7 @@ export default function Home() {
               <Briefcase className="w-3.5 h-3.5" />
               ERP
             </Link>
+            <StaffLogoutButton />
             <button
               onClick={() => handleOpenCreateModal()}
               className="hidden sm:flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-colors shadow-lg shadow-red-600/25 cursor-pointer"

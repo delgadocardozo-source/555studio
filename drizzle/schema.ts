@@ -159,7 +159,7 @@ export type InsertAppointment = typeof appointments.$inferInsert;
 
 /**
  * Libro de caja: ingresos y egresos operativos.
- * Independiente del cobro de turnos (appointments.payment*).
+ * El cobro marcado en la agenda entra acá como ingreso.
  */
 export const cashMovementTypeEnum = mysqlEnum("cashMovementType", ["ingreso", "egreso"]);
 
@@ -177,6 +177,29 @@ export const cashMovements = mysqlTable("cash_movements", {
 
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type InsertCashMovement = typeof cashMovements.$inferInsert;
+
+/** Clave compartida del equipo. Una sola fila. */
+export const staffAccess = mysqlTable("staff_access", {
+  id: int("id").autoincrement().primaryKey(),
+  pinSalt: varchar("pinSalt", { length: 64 }).notNull(),
+  pinHash: varchar("pinHash", { length: 128 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Conteo de efectivo al cierre de un día. */
+export const cashDayCloses = mysqlTable("cash_day_closes", {
+  id: int("id").autoincrement().primaryKey(),
+  closeDate: varchar("closeDate", { length: 10 }).notNull().unique(),
+  countedAmount: int("countedAmount").notNull(),
+  note: text("note"),
+  efectivoIn: int("efectivoIn").notNull().default(0),
+  comprobanteIn: int("comprobanteIn").notNull().default(0),
+  egresos: int("egresos").notNull().default(0),
+  expectedDrawer: int("expectedDrawer").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 
 /**
  * Personal del lavadero (nómina básica).

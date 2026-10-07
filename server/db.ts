@@ -899,6 +899,7 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
       );
     }
     await postFinalizeCash(existing, params);
+    await postFinalizeInvoice(existing);
     return finalized;
   }
 
@@ -913,6 +914,7 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
     );
   }
   await postFinalizeCash(existing, params);
+  await postFinalizeInvoice(existing);
   return updated;
 }
 
@@ -933,6 +935,25 @@ async function postFinalizeCash(
   } catch (err) {
     const detail = err instanceof Error ? err.message : "error de caja";
     throw new Error(`El turno quedó registrado, pero caja no se actualizó: ${detail}`);
+  }
+}
+
+async function postFinalizeInvoice(existing: {
+  id?: number;
+  servicePrice?: number | string;
+  scheduledDate?: string;
+}) {
+  const amount = Math.round(Number(existing.servicePrice) || 0);
+  if (!existing.id || amount <= 0) return;
+  const scheduled = String(existing.scheduledDate || "");
+  const issuedDate = /^\d{4}-\d{2}-\d{2}$/.test(scheduled) ? scheduled : undefined;
+  const { issueInvoice } = await import("./invoicingDb");
+  try {
+    await issueInvoice(Number(existing.id), issuedDate);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "error de facturación";
+    if (detail.includes("ya tiene un comprobante") || detail.includes("no tiene monto")) return;
+    throw new Error(`El turno quedó registrado, pero el comprobante no se emitió: ${detail}`);
   }
 }
 
