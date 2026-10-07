@@ -898,6 +898,7 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
         String(existing.scheduledDate || new Date().toISOString().slice(0, 10))
       );
     }
+    await postFinalizeCash(existing, params);
     return finalized;
   }
 
@@ -911,7 +912,28 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
       String(existing.scheduledDate || new Date().toISOString().slice(0, 10))
     );
   }
+  await postFinalizeCash(existing, params);
   return updated;
+}
+
+async function postFinalizeCash(
+  existing: { id?: number; code?: string; clientName?: string; servicePrice?: number | string; scheduledDate?: string },
+  params: FinalizePaymentParams
+) {
+  const { syncAgendaPaymentToCash } = await import("./agendaCashSync");
+  try {
+    await syncAgendaPaymentToCash({
+      code: String(existing.code || `#${existing.id}`),
+      clientName: String(existing.clientName || ""),
+      amount: Number(existing.servicePrice) || 0,
+      paymentStatus: params.paymentStatus,
+      paymentMethod: params.paymentStatus === "pagado" ? params.paymentMethod ?? null : null,
+      scheduledDate: String(existing.scheduledDate || ""),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "error de caja";
+    throw new Error(`El turno quedó registrado, pero caja no se actualizó: ${detail}`);
+  }
 }
 
 export async function updateAppointmentDetails(

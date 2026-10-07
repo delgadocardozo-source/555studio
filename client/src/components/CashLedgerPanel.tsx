@@ -301,7 +301,7 @@ export function CashLedgerPanel() {
             Ingresos y Egresos
           </h2>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Caja operativa aparte del agendamiento. Filtrá por persona para ver sus compras.
+            Los cobros marcados como pagados en la agenda entran solos. Filtrá por persona para ver sus compras.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
