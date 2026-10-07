@@ -39,8 +39,9 @@ export function buildReengageWhatsAppText(params: {
 }
 
 /**
- * Clientes con último lavado finalizado hace exactamente `days` (o ≥ days si loose),
- * sin turno futuro pendiente, y sin reminder reciente.
+ * Clientes con último lavado finalizado hace al menos `days`,
+ * sin turno futuro pendiente.
+ * Escribirles por WhatsApp no los saca: salen solo cuando reservan.
  */
 export function selectReengageCandidates(params: {
   today: string;
@@ -58,11 +59,11 @@ export function selectReengageCandidates(params: {
     lastReminderAt?: string | null;
   }>;
   normalizePhoneKey: (phone: string) => string;
-  /** Si true, incluye ≥ days (útil para cola diaria). Default: ≥ days y ≤ days+2. */
+  /** Tope opcional de días después del umbral. Sin tope, quedan hasta que reserven. */
   windowDays?: number;
 }): ReengageCandidate[] {
   const days = params.days ?? REENGAGE_DAYS_AFTER_WASH;
-  const windowDays = params.windowDays ?? 2;
+  const windowDays = params.windowDays;
   const byPhone = new Map<
     string,
     { name: string; phone: string; lastWash: string; hasUpcoming: boolean }
@@ -100,14 +101,10 @@ export function selectReengageCandidates(params: {
   for (const [phoneKey, info] of Array.from(byPhone.entries())) {
     if (!info.lastWash || info.hasUpcoming) continue;
     const since = daysBetween(info.lastWash, params.today);
-    if (since < days || since > days + windowDays) continue;
+    if (since < days) continue;
+    if (windowDays != null && since > days + windowDays) continue;
     const cust = customerByKey.get(phoneKey);
     const lastReminderAt = cust?.lastReminderAt ? String(cust.lastReminderAt) : null;
-    if (lastReminderAt) {
-      const reminderDay = lastReminderAt.slice(0, 10);
-      // No re-avisar si ya se marcó reminder después del último lavado.
-      if (reminderDay >= info.lastWash) continue;
-    }
     out.push({
       phoneKey,
       clientName: cust?.clientName || info.name,

@@ -16,7 +16,6 @@ export function ReengagePanel() {
   const { data: rows = [], isLoading, refetch, isFetching } = trpc.reengage.list.useQuery();
   const markMut = trpc.reengage.markSent.useMutation({
     onSuccess: () => {
-      toast.success("Marcado como enviado");
       utils.reengage.invalidate();
     },
     onError: (err) => toast.error(err.message),
@@ -31,8 +30,9 @@ export function ReengagePanel() {
             Recontacto · 7 días
           </h2>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Clientes con lavado hace ~1 semana, sin turno futuro. El mensaje incluye el link a{" "}
-            <span className="text-emerald-400/90">/agendar</span>; vos lo mandás por WhatsApp.
+            Clientes con lavado hace al menos una semana y sin turno nuevo. Escribirles no los
+            saca de la lista: desaparecen solo cuando reservan. El mensaje incluye el link a{" "}
+            <span className="text-emerald-400/90">/agendar</span>.
           </p>
         </div>
         <button
@@ -72,6 +72,11 @@ export function ReengagePanel() {
                       {row.clientPhone} · lavó {row.lastWashDate} · hace {row.daysSinceWash}d
                     </p>
                   </div>
+                  {row.lastReminderAt && (
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-emerald-300/90 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2 py-1">
+                      Contactado
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   <a
@@ -82,15 +87,8 @@ export function ReengagePanel() {
                     className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-emerald-600 text-white"
                   >
                     <MessageCircle className="w-3.5 h-3.5" />
-                    WhatsApp + marcar
+                    Escribir
                   </a>
-                  <button
-                    type="button"
-                    onClick={() => markMut.mutate({ phone: row.clientPhone })}
-                    className="text-[11px] font-bold px-3 py-2 rounded-xl border border-slate-700 text-slate-300"
-                  >
-                    Solo marcar enviado
-                  </button>
                 </div>
               </div>
             );
