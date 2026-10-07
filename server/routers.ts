@@ -32,6 +32,7 @@ import * as receivablesDb from "./receivablesDb";
 import * as washRecipeDb from "./washRecipeDb";
 import * as erpControlDb from "./erpControlDb";
 import * as invoicingDb from "./invoicingDb";
+import * as easDb from "./easDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
 import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
@@ -1163,6 +1164,57 @@ export const appRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: err?.message || "No se pudo anular el comprobante",
+          });
+        }
+      }),
+  }),
+
+  /** Libros de la EAS: diario, inventario, IVA y compras. */
+  eas: router({
+    books: publicProcedure
+      .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+      .query(async ({ input }) => await easDb.getEasBooks(input.month)),
+
+    saveProfile: publicProcedure
+      .input(
+        z.object({
+          legalName: z.string().min(2),
+          ruc: z.string().min(3),
+          regime: z.enum(["resimple", "simple", "general"]),
+          activity: z.string().min(2),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await easDb.saveEasProfile(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar la ficha",
+          });
+        }
+      }),
+
+    addPurchase: publicProcedure
+      .input(
+        z.object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          supplierName: z.string().min(2),
+          supplierRuc: z.string().optional(),
+          voucherNumber: z.string().min(1),
+          description: z.string().optional(),
+          taxed10: z.number().int().nonnegative().optional(),
+          taxed5: z.number().int().nonnegative().optional(),
+          exempt: z.number().int().nonnegative().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await easDb.addEasPurchase(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo registrar la compra",
           });
         }
       }),
