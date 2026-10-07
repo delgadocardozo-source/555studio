@@ -7,6 +7,9 @@ dist/
 build/
 *.dist
 
+# Clave local del equipo y cierres de caja cuando no hay Blob ni MySQL
+/data/
+
 # Environment variables
 .env
 .env.local
