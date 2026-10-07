@@ -302,3 +302,30 @@ export const washStockConsumptions = mysqlTable("wash_stock_consumptions", {
   consumedAt: timestamp("consumedAt").defaultNow().notNull(),
 });
 
+/**
+ * Comprobantes de servicio (facturación operativa).
+ * Un turno finalizado tiene como máximo un comprobante vigente.
+ */
+export const serviceInvoiceStatusEnum = mysqlEnum("serviceInvoiceStatus", ["emitida", "anulada"]);
+
+export const serviceInvoices = mysqlTable("service_invoices", {
+  id: int("id").autoincrement().primaryKey(),
+  number: varchar("number", { length: 24 }).notNull().unique(),
+  status: serviceInvoiceStatusEnum.notNull().default("emitida"),
+  issuedDate: varchar("issuedDate", { length: 10 }).notNull(),
+  appointmentId: int("appointmentId").notNull(),
+  appointmentCode: varchar("appointmentCode", { length: 32 }).notNull(),
+  clientName: varchar("clientName", { length: 160 }).notNull(),
+  clientPhone: varchar("clientPhone", { length: 40 }).notNull().default(""),
+  clientTaxId: varchar("clientTaxId", { length: 40 }),
+  companyName: varchar("companyName", { length: 160 }),
+  linesJson: text("linesJson").notNull(),
+  total: int("total").notNull(),
+  taxableBase: int("taxableBase").notNull(),
+  ivaAmount: int("ivaAmount").notNull(),
+  voidReason: text("voidReason"),
+  voidedAt: varchar("voidedAt", { length: 40 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
