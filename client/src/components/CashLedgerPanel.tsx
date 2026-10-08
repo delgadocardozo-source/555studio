@@ -22,6 +22,7 @@ import {
   type CashMovementType,
 } from "@shared/cashLedger";
 import { buildCashLedgerFile, buildCashLedgerText } from "@/lib/cashLedgerPdf";
+import { CashDayClose } from "@/components/CashDayClose";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -294,6 +295,7 @@ export function CashLedgerPanel() {
 
   return (
     <div className="space-y-3">
+      <CashDayClose />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-extrabold text-white flex items-center gap-2">

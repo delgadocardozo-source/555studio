@@ -24,6 +24,7 @@ import { ReceivablesPanel } from "@/components/ReceivablesPanel";
 import { ReengagePanel } from "@/components/ReengagePanel";
 import { ErpControlPanel } from "@/components/ErpControlPanel";
 import { CustomersCrmPanel } from "@/components/CustomersCrmPanel";
+import { StaffLogoutButton } from "@/components/StaffGate";
 
 type ErpModule =
   | "control"
@@ -234,6 +235,7 @@ export default function ErpHome() {
               <CalendarIcon className="w-3.5 h-3.5 text-red-400" />
               Agenda
             </Link>
+            <StaffLogoutButton />
           </div>
         </div>
       </header>

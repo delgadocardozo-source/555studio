@@ -7,22 +7,39 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import ErpHome from "./pages/ErpHome";
 import BookingPage from "./pages/BookingPage";
+import { StaffGate } from "./components/StaffGate";
+
+function GuardedHome() {
+  return (
+    <StaffGate>
+      <Home />
+    </StaffGate>
+  );
+}
+
+function GuardedErp() {
+  return (
+    <StaffGate>
+      <ErpHome />
+    </StaffGate>
+  );
+}
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/" component={GuardedHome} />
       <Route path="/agendar" component={BookingPage} />
-      <Route path="/erp" component={ErpHome} />
-      <Route path="/erp/tablero" component={ErpHome} />
-      <Route path="/erp/caja" component={ErpHome} />
-      <Route path="/erp/facturacion" component={ErpHome} />
-      <Route path="/erp/personal" component={ErpHome} />
-      <Route path="/erp/inventario" component={ErpHome} />
-      <Route path="/erp/proveedores" component={ErpHome} />
-      <Route path="/erp/deudores" component={ErpHome} />
-      <Route path="/erp/recontacto" component={ErpHome} />
-      <Route path="/erp/clientes" component={ErpHome} />
+      <Route path="/erp" component={GuardedErp} />
+      <Route path="/erp/tablero" component={GuardedErp} />
+      <Route path="/erp/caja" component={GuardedErp} />
+      <Route path="/erp/facturacion" component={GuardedErp} />
+      <Route path="/erp/personal" component={GuardedErp} />
+      <Route path="/erp/inventario" component={GuardedErp} />
+      <Route path="/erp/proveedores" component={GuardedErp} />
+      <Route path="/erp/deudores" component={GuardedErp} />
+      <Route path="/erp/recontacto" component={GuardedErp} />
+      <Route path="/erp/clientes" component={GuardedErp} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

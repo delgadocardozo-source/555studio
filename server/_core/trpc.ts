@@ -10,6 +10,19 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
+/** Agenda interna, ERP y caja. El portal /agendar no usa este procedimiento. */
+export const staffProcedure = t.procedure.use(async (opts) => {
+  if (process.env.STAFF_GATE === "off") return opts.next();
+  const { readStaffCookie, staffTokenValid, STAFF_LOCK_MESSAGE } = await import("../staffAccess");
+  const { readStaffSecret } = await import("../staffAccessDb");
+  const secret = await readStaffSecret();
+  const token = readStaffCookie(opts.ctx.req);
+  if (!secret || !staffTokenValid(token, secret.hash)) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: STAFF_LOCK_MESSAGE });
+  }
+  return opts.next();
+});
+
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
 

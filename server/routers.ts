@@ -21,7 +21,7 @@ import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
 import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, router, staffProcedure } from "./_core/trpc";
 import { storagePut } from "./storage";
 import * as db from "./db";
 import * as cashDb from "./cashLedgerDb";
@@ -32,6 +32,9 @@ import * as receivablesDb from "./receivablesDb";
 import * as washRecipeDb from "./washRecipeDb";
 import * as erpControlDb from "./erpControlDb";
 import * as invoicingDb from "./invoicingDb";
+import * as cashCloseDb from "./cashCloseDb";
+import { hashPin, pinMatches, setStaffCookie, clearStaffCookie, signStaffToken, readStaffCookie, staffTokenValid } from "./staffAccess";
+import { readStaffSecret, writeStaffSecret } from "./staffAccessDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, STOCK_MOVEMENT_TYPES } from "@shared/inventory";
 import { SUPPLIER_CATEGORIES } from "@shared/suppliers";
@@ -167,7 +170,7 @@ export const appRouter = router({
   }),
 
   appointments: router({
-    list: publicProcedure
+    list: staffProcedure
       .input(
         z.object({
           date: z.string().optional(),
@@ -182,7 +185,7 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await db.listAppointments(input)),
 
-    getById: publicProcedure
+    getById: staffProcedure
       .input(z.object({ id: z.number().int() }))
       .query(async ({ input }) => await db.getAppointmentById(input.id)),
 
@@ -322,11 +325,11 @@ export const appRouter = router({
         };
       }),
 
-    updateStatus: publicProcedure
+    updateStatus: staffProcedure
       .input(z.object({ id: z.number().int(), status: z.enum(["pendiente", "confirmado", "en_camino", "en_proceso", "finalizado", "cancelado"]) }))
       .mutation(async ({ input }) => await db.updateAppointmentStatus(input.id, input.status)),
 
-    finalizeWithPayment: publicProcedure
+    finalizeWithPayment: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -350,7 +353,7 @@ export const appRouter = router({
     // Comprobantes en Vercel Blob (producción) o Manus Storage (workspace actual).
     // Blob privado: el navegador no puede abrir la URL cruda (Forbidden).
     // Usar getReceiptUrl para obtener un enlace firmado de corta duración.
-    uploadReceipt: publicProcedure
+    uploadReceipt: staffProcedure
       .input(z.object({ fileName: z.string(), contentType: z.string(), base64Data: z.string() }))
       .mutation(async ({ input }) => {
         const buffer = Buffer.from(input.base64Data, "base64");
@@ -369,14 +372,14 @@ export const appRouter = router({
         return { key: stored.key, url: stored.url };
       }),
 
-    getReceiptUrl: publicProcedure
+    getReceiptUrl: staffProcedure
       .input(z.object({ url: z.string().min(1) }))
       .mutation(async ({ input }) => {
         const viewUrl = await resolveReceiptViewUrl(input.url);
         return { url: viewUrl };
       }),
 
-    update: publicProcedure
+    update: staffProcedure
       .input(z.object({ id: z.number().int(), data: appointmentInputSchema.partial() }))
       .mutation(async ({ input }) => {
         const { vehicles, clientTaxId, ...rest } = input.data;
@@ -459,7 +462,7 @@ export const appRouter = router({
       }),
 
     /** Mover turno a otro horario/fecha sin reabrir el formulario completo. */
-    reschedule: publicProcedure
+    reschedule: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -562,21 +565,21 @@ export const appRouter = router({
       }),
 
     /** Corrige solapes del día (p. ej. tras heal N×80) empujando turnos posteriores. */
-    sanitizeDay: publicProcedure
+    sanitizeDay: staffProcedure
       .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
       .mutation(async ({ input }) => {
         const result = await db.sanitizeDaySchedule(input.date);
         return result;
       }),
 
-    delete: publicProcedure
+    delete: staffProcedure
       .input(z.object({ id: z.number().int() }))
       .mutation(async ({ input }) => await db.deleteAppointment(input.id)),
 
-    stats: publicProcedure.query(async () => await db.getDashboardStats()),
+    stats: staffProcedure.query(async () => await db.getDashboardStats()),
 
     /** Tablero gerencial (no mezclado con la agenda operativa). */
-    managerialStats: publicProcedure
+    managerialStats: staffProcedure
       .input(
         z
           .object({
@@ -589,7 +592,7 @@ export const appRouter = router({
   }),
 
   customers: router({
-    search: publicProcedure
+    search: staffProcedure
       .input(z.object({ query: z.string().optional(), limit: z.number().int().positive().max(200).optional() }).optional())
       .query(async ({ input }) => await db.searchCustomers(input?.query || "", input?.limit ?? 20)),
 
@@ -602,11 +605,11 @@ export const appRouter = router({
       .query(async ({ input }) => await db.getCustomerLoyalty(input.phone)),
 
     /** CRM 360 lite para el ERP. */
-    crmList: publicProcedure
+    crmList: staffProcedure
       .input(z.object({ query: z.string().optional(), limit: z.number().int().positive().max(100).optional() }).optional())
       .query(async ({ input }) => await erpControlDb.listCustomerCrm(input || {})),
 
-    upsert: publicProcedure
+    upsert: staffProcedure
       .input(
         z.object({
           clientName: z.string().min(2),
@@ -651,7 +654,7 @@ export const appRouter = router({
 
   /** Centro de control ERP — KPIs cruzados. */
   erp: router({
-    controlTower: publicProcedure
+    controlTower: staffProcedure
       .input(
         z
           .object({
@@ -665,9 +668,9 @@ export const appRouter = router({
 
   /** Recontacto post-lavado (7 días) — cola operativa + WhatsApp. */
   reengage: router({
-    list: publicProcedure.query(async () => await db.listReengageCandidates()),
+    list: staffProcedure.query(async () => await db.listReengageCandidates()),
 
-    markSent: publicProcedure
+    markSent: staffProcedure
       .input(z.object({ phone: z.string().min(6) }))
       .mutation(async ({ input }) => {
         try {
@@ -680,7 +683,7 @@ export const appRouter = router({
         }
       }),
 
-    previewMessage: publicProcedure
+    previewMessage: staffProcedure
       .input(z.object({ clientName: z.string(), lastWashDate: z.string() }))
       .query(({ input }) => ({
         text: buildReengageWhatsAppText(input),
@@ -692,7 +695,7 @@ export const appRouter = router({
    * Ingresos / egresos con responsable (persona) y filtros.
    */
   cashLedger: router({
-    list: publicProcedure
+    list: staffProcedure
       .input(
         z
           .object({
@@ -707,7 +710,7 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await cashDb.listCashMovements(input || {})),
 
-    stats: publicProcedure
+    stats: staffProcedure
       .input(
         z
           .object({
@@ -722,9 +725,9 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await cashDb.getCashLedgerStats(input || {})),
 
-    persons: publicProcedure.query(async () => await cashDb.listCashPersons()),
+    persons: staffProcedure.query(async () => await cashDb.listCashPersons()),
 
-    create: publicProcedure
+    create: staffProcedure
       .input(
         z.object({
           type: z.enum(["ingreso", "egreso"]),
@@ -746,7 +749,7 @@ export const appRouter = router({
         }
       }),
 
-    update: publicProcedure
+    update: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -771,7 +774,7 @@ export const appRouter = router({
         }
       }),
 
-    delete: publicProcedure
+    delete: staffProcedure
       .input(z.object({ id: z.number().int() }))
       .mutation(async ({ input }) => {
         try {
@@ -787,11 +790,11 @@ export const appRouter = router({
 
   /** Nómina / pagos a personal — ERP básico aparte de agenda y caja. */
   payroll: router({
-    listStaff: publicProcedure
+    listStaff: staffProcedure
       .input(z.object({ includeInactive: z.boolean().optional() }).optional())
       .query(async ({ input }) => await payrollDb.listStaff(input || {})),
 
-    createStaff: publicProcedure
+    createStaff: staffProcedure
       .input(
         z.object({
           name: z.string().min(1),
@@ -813,7 +816,7 @@ export const appRouter = router({
         }
       }),
 
-    updateStaff: publicProcedure
+    updateStaff: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -838,7 +841,7 @@ export const appRouter = router({
         }
       }),
 
-    listPayments: publicProcedure
+    listPayments: staffProcedure
       .input(
         z
           .object({
@@ -852,7 +855,7 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await payrollDb.listPayments(input || {})),
 
-    stats: publicProcedure
+    stats: staffProcedure
       .input(
         z
           .object({
@@ -866,7 +869,7 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await payrollDb.getPayrollStats(input || {})),
 
-    createPayment: publicProcedure
+    createPayment: staffProcedure
       .input(
         z.object({
           staffId: z.number().int(),
@@ -887,7 +890,7 @@ export const appRouter = router({
         }
       }),
 
-    deletePayment: publicProcedure
+    deletePayment: staffProcedure
       .input(z.object({ id: z.number().int() }))
       .mutation(async ({ input }) => {
         try {
@@ -900,7 +903,7 @@ export const appRouter = router({
         }
       }),
 
-    meta: publicProcedure.query(() => ({
+    meta: staffProcedure.query(() => ({
       roles: STAFF_ROLES,
       payTypes: STAFF_PAY_TYPES,
       concepts: PAYMENT_CONCEPTS,
@@ -909,17 +912,17 @@ export const appRouter = router({
 
   /** Inventario de insumos — ERP aparte de agenda. */
   inventory: router({
-    listItems: publicProcedure
+    listItems: staffProcedure
       .input(z.object({ includeInactive: z.boolean().optional() }).optional())
       .query(async ({ input }) => await inventoryDb.listInventoryItems(input || {})),
 
-    stats: publicProcedure.query(async () => await inventoryDb.getInventoryStats()),
+    stats: staffProcedure.query(async () => await inventoryDb.getInventoryStats()),
 
-    listMovements: publicProcedure
+    listMovements: staffProcedure
       .input(z.object({ limit: z.number().int().positive().max(200).optional() }).optional())
       .query(async ({ input }) => await inventoryDb.listStockMovements(input?.limit ?? 50)),
 
-    createItem: publicProcedure
+    createItem: staffProcedure
       .input(
         z.object({
           name: z.string().min(1),
@@ -943,7 +946,7 @@ export const appRouter = router({
         }
       }),
 
-    updateItem: publicProcedure
+    updateItem: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -970,7 +973,7 @@ export const appRouter = router({
         }
       }),
 
-    applyMovement: publicProcedure
+    applyMovement: staffProcedure
       .input(
         z.object({
           itemId: z.number().int(),
@@ -991,16 +994,16 @@ export const appRouter = router({
         }
       }),
 
-    meta: publicProcedure.query(() => ({
+    meta: staffProcedure.query(() => ({
       categories: INVENTORY_CATEGORIES,
       units: INVENTORY_UNITS,
       movementTypes: STOCK_MOVEMENT_TYPES,
     })),
 
     /** Armado de lavado: insumos por auto / camioneta. */
-    getRecipes: publicProcedure.query(async () => await washRecipeDb.getWashRecipes()),
+    getRecipes: staffProcedure.query(async () => await washRecipeDb.getWashRecipes()),
 
-    setRecipes: publicProcedure
+    setRecipes: staffProcedure
       .input(
         z.object({
           auto: z
@@ -1032,7 +1035,7 @@ export const appRouter = router({
         }
       }),
 
-    setRecipeForType: publicProcedure
+    setRecipeForType: staffProcedure
       .input(
         z.object({
           vehicleType: z.enum(WASH_VEHICLE_TYPES),
@@ -1058,7 +1061,7 @@ export const appRouter = router({
 
   /** Proveedores — ERP aparte de agenda. */
   suppliers: router({
-    list: publicProcedure
+    list: staffProcedure
       .input(
         z
           .object({
@@ -1069,7 +1072,7 @@ export const appRouter = router({
       )
       .query(async ({ input }) => await suppliersDb.listSuppliers(input || {})),
 
-    create: publicProcedure
+    create: staffProcedure
       .input(
         z.object({
           name: z.string().min(1),
@@ -1090,7 +1093,7 @@ export const appRouter = router({
         }
       }),
 
-    update: publicProcedure
+    update: staffProcedure
       .input(
         z.object({
           id: z.number().int(),
@@ -1114,20 +1117,20 @@ export const appRouter = router({
         }
       }),
 
-    meta: publicProcedure.query(() => ({
+    meta: staffProcedure.query(() => ({
       categories: SUPPLIER_CATEGORIES,
     })),
   }),
 
   /** Deudores automáticos: turnos de agenda con falta_pagar. */
   receivables: router({
-    list: publicProcedure
+    list: staffProcedure
       .input(z.object({ includeCollected: z.boolean().optional() }).optional())
       .query(async ({ input }) => await receivablesDb.listDebts(input || {})),
 
-    stats: publicProcedure.query(async () => await receivablesDb.getDebtStats()),
+    stats: staffProcedure.query(async () => await receivablesDb.getDebtStats()),
 
-    markPaid: publicProcedure
+    markPaid: staffProcedure
       .input(
         z.object({
           appointmentId: z.number().int(),
@@ -1153,10 +1156,10 @@ export const appRouter = router({
    * El cobro no se duplica: sigue en el turno (pagado / falta pagar).
    */
   billing: router({
-    list: publicProcedure.query(async () => await invoicingDb.listInvoices()),
-    stats: publicProcedure.query(async () => await invoicingDb.getInvoiceStats()),
-    billable: publicProcedure.query(async () => await invoicingDb.listBillableAppointments()),
-    issue: publicProcedure
+    list: staffProcedure.query(async () => await invoicingDb.listInvoices()),
+    stats: staffProcedure.query(async () => await invoicingDb.getInvoiceStats()),
+    billable: staffProcedure.query(async () => await invoicingDb.listBillableAppointments()),
+    issue: staffProcedure
       .input(
         z.object({
           appointmentId: z.number().int(),
@@ -1173,7 +1176,7 @@ export const appRouter = router({
           });
         }
       }),
-    void: publicProcedure
+    void: staffProcedure
       .input(z.object({ id: z.number().int(), reason: z.string().min(3) }))
       .mutation(async ({ input }) => {
         try {
@@ -1185,6 +1188,78 @@ export const appRouter = router({
           });
         }
       }),
+  }),
+
+  /** Cierre de caja del día: esperado en el cajón contra lo contado. */
+  cashClose: router({
+    day: staffProcedure
+      .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+      .query(async ({ input }) => await cashCloseDb.getCashDay(input.date)),
+    save: staffProcedure
+      .input(
+        z.object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          counted: z.number().int().nonnegative(),
+          note: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await cashCloseDb.saveCashDay(input);
+        } catch (err: any) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar el cierre",
+          });
+        }
+      }),
+  }),
+
+  /** Clave del equipo. El portal público no pasa por acá. */
+  staffAccess: router({
+    status: publicProcedure.query(async ({ ctx }) => {
+      const secret = await readStaffSecret();
+      const token = readStaffCookie(ctx.req);
+      return {
+        configured: Boolean(secret),
+        unlocked: Boolean(secret && staffTokenValid(token, secret.hash)),
+      };
+    }),
+    setup: publicProcedure
+      .input(z.object({ pin: z.string(), confirm: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const existing = await readStaffSecret();
+        if (existing) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "La clave del equipo ya está creada" });
+        }
+        if (input.pin !== input.confirm) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Las dos claves no coinciden" });
+        }
+        try {
+          const hashed = hashPin(input.pin);
+          const now = new Date().toISOString();
+          await writeStaffSecret({ salt: hashed.salt, hash: hashed.hash, updatedAt: now });
+          setStaffCookie(ctx.res, signStaffToken(hashed.hash));
+          return { ok: true as const };
+        } catch (err: any) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: err?.message || "No se pudo crear la clave" });
+        }
+      }),
+    login: publicProcedure.input(z.object({ pin: z.string() })).mutation(async ({ input, ctx }) => {
+      const secret = await readStaffSecret();
+      if (!secret) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Todavía no hay clave del equipo" });
+      }
+      if (!pinMatches(input.pin, secret.salt, secret.hash)) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Clave incorrecta" });
+      }
+      setStaffCookie(ctx.res, signStaffToken(secret.hash));
+      return { ok: true as const };
+    }),
+    logout: publicProcedure.mutation(({ ctx }) => {
+      clearStaffCookie(ctx.res);
+      return { ok: true as const };
+    }),
   }),
 });
 
