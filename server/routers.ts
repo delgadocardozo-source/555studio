@@ -593,8 +593,8 @@ export const appRouter = router({
 
   customers: router({
     search: staffProcedure
-      .input(z.object({ query: z.string().optional() }))
-      .query(async ({ input }) => await db.searchCustomers(input.query || "")),
+      .input(z.object({ query: z.string().optional(), limit: z.number().int().positive().max(200).optional() }).optional())
+      .query(async ({ input }) => await db.searchCustomers(input?.query || "", input?.limit ?? 20)),
 
     findByPhone: publicProcedure
       .input(z.object({ phone: z.string() }))
@@ -628,9 +628,28 @@ export const appRouter = router({
             )
             .optional(),
           replaceVehicles: z.boolean().optional(),
+          previousPhone: z.string().optional().nullable(),
+          replaceProfile: z.boolean().optional(),
         })
       )
-      .mutation(async ({ input }) => await db.upsertCustomerProfile(input)),
+      .mutation(async ({ input }) => {
+        try {
+          const saved = await db.upsertCustomerProfile(input);
+          if (!saved) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "No se pudo guardar el cliente",
+            });
+          }
+          return saved;
+        } catch (err: any) {
+          if (err instanceof TRPCError) throw err;
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar el cliente",
+          });
+        }
+      }),
   }),
 
   /** Centro de control ERP — KPIs cruzados. */

@@ -35,6 +35,7 @@ import {
   CalendarPlus,
 } from "lucide-react";
 import { Link } from "wouter";
+import { AgendaCustomersDirectory } from "@/components/CustomersCrmPanel";
 import { StaffLogoutButton } from "@/components/StaffGate";
 import { toast } from "sonner";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
@@ -191,7 +192,10 @@ export default function Home() {
     { query: formData.clientPhone.length >= 3 || formData.clientName.length >= 3 ? formData.clientPhone || formData.clientName : "" },
     { enabled: isModalOpen }
   );
-  const { data: allCustomersList = [] } = trpc.customers.search.useQuery({}, { enabled: activeTab === "portal_preview" });
+  const { data: allCustomersList = [] } = trpc.customers.search.useQuery(
+    { limit: 80 },
+    { enabled: activeTab === "portal_preview" }
+  );
 
   const activeFiltersCount = useMemo(() => {
     let count = 0;
@@ -2102,44 +2106,8 @@ export default function Home() {
         {activeTab === "portal_preview" && (
           <div className="max-w-2xl mx-auto space-y-4 pt-1">
             {/* Directorio de Clientes y RUC para Facturación */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-amber-400 tracking-wider">
-                  <Receipt className="w-4 h-4" />
-                  <span>Clientes y RUC de Facturación</span>
-                </div>
-                <span className="text-[10px] text-slate-400">Recurrentes</span>
-              </div>
-              <p className="text-xs text-slate-300">
-                A medida que cargás servicios, el sistema recuerda los datos y RUC para autocompletar automáticamente los siguientes pedidos.
-              </p>
-
-              {allCustomersList.length === 0 ? (
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-500">
-                  Aún no hay clientes registrados. Se guardarán automáticamente con cada servicio creado.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:max-h-72 sm:overflow-y-auto sm:overscroll-contain">
-                  {allCustomersList.map((cust: any) => (
-                    <div
-                      key={cust.id || cust.phoneKey}
-                      className="bg-slate-950 border border-slate-800 p-3 rounded-2xl space-y-1"
-                    >
-                      <div className="font-bold text-xs text-white">{cust.clientName}</div>
-                      <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                        <Phone className="w-3 h-3 text-emerald-400" />
-                        <span>{cust.clientPhone}</span>
-                      </div>
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
-                        <span className="text-slate-500">RUC:</span>
-                        <span className="font-mono font-bold text-amber-300">
-                          {cust.clientTaxId || "Sin RUC"}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl">
+              <AgendaCustomersDirectory customers={allCustomersList} />
             </div>
 
             <div className="bg-slate-900 border border-red-500/30 rounded-3xl p-5 sm:p-6 shadow-xl">
