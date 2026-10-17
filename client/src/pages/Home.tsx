@@ -893,6 +893,10 @@ export default function Home() {
       clientType: customer.clientType || prev.clientType,
       companyName: customer.companyName || prev.companyName || "",
       clientTaxId: customer.clientTaxId || prev.clientTaxId || "",
+      cityZone: customer.cityZone || prev.cityZone,
+      address: customer.address || prev.address,
+      addressReference: customer.addressReference || prev.addressReference,
+      locationUrl: customer.locationUrl || prev.locationUrl,
     }));
     const garage = Array.isArray(customer.vehicles) ? customer.vehicles : [];
     if (garage.length > 0) {

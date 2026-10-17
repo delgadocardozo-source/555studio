@@ -617,6 +617,10 @@ export const appRouter = router({
           clientType: z.enum(["particular", "oficina", "empresa_flota"]).default("particular"),
           companyName: z.string().optional().nullable(),
           clientTaxId: z.string().optional().nullable(),
+          cityZone: z.enum(["Asuncion", "Luque", "Mariano Roque Alonso", "San Lorenzo"]).optional().nullable(),
+          address: z.string().optional().nullable(),
+          locationUrl: z.string().optional().nullable(),
+          addressReference: z.string().optional().nullable(),
           vehicles: z
             .array(
               z.object({

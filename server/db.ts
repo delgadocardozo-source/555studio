@@ -291,6 +291,10 @@ export interface UpsertCustomerProfileParams {
   clientType: "particular" | "oficina" | "empresa_flota";
   companyName?: string | null;
   clientTaxId?: string | null;
+  cityZone?: string | null;
+  address?: string | null;
+  locationUrl?: string | null;
+  addressReference?: string | null;
   vehicles?: CustomerVehicleInput[] | null;
   /** Si true, reemplaza el garaje completo; si false/omit, mergea. */
   replaceVehicles?: boolean;
@@ -310,6 +314,70 @@ function profileText(
 ) {
   if (replaceProfile) return incoming?.trim() || null;
   return incoming?.trim() || previous || null;
+}
+
+async function syncCustomerIdentityToAppointments(params: {
+  previousPhone: string;
+  clientName: string;
+  clientPhone: string;
+  clientType: UpsertCustomerProfileParams["clientType"];
+  companyName: string | null;
+  clientTaxId: string | null;
+  cityZone: string | null;
+  address: string | null;
+  locationUrl: string | null;
+  addressReference: string | null;
+}) {
+  const keys = new Set(
+    [normalizePhoneKey(params.previousPhone), normalizePhoneKey(params.clientPhone)].filter(Boolean)
+  );
+  const contact = {
+    clientName: params.clientName,
+    clientPhone: params.clientPhone,
+    clientType: params.clientType,
+    companyName: params.companyName,
+    clientTaxId: params.clientTaxId,
+  };
+  const place = params.address
+    ? {
+        cityZone: (params.cityZone || "Asuncion") as "Asuncion" | "Luque" | "Mariano Roque Alonso" | "San Lorenzo",
+        address: params.address,
+        locationUrl: params.locationUrl,
+        addressReference: params.addressReference,
+      }
+    : null;
+
+  const matches = (phone: string) => keys.has(normalizePhoneKey(phone));
+
+  if (isVercelBlobRuntime()) {
+    await withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      let changed = false;
+      const next = rows.map((row) => {
+        if (!matches(String(row.clientPhone || ""))) return row;
+        changed = true;
+        const open = row.status !== "finalizado" && row.status !== "cancelado";
+        return normalizeAppointmentRow({
+          ...row,
+          ...contact,
+          ...(open && place ? place : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      if (changed) await writeBlobAppointments(next);
+    });
+    return;
+  }
+
+  const rows = await listAppointments({});
+  for (const row of rows) {
+    if (!matches(String(row.clientPhone || ""))) continue;
+    const open = row.status !== "finalizado" && row.status !== "cancelado";
+    await updateAppointmentDetails(Number(row.id), {
+      ...contact,
+      ...(open && place ? place : {}),
+    });
+  }
 }
 
 export async function upsertCustomerProfile(params: UpsertCustomerProfileParams) {
@@ -348,6 +416,10 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
         clientType: params.clientType,
         companyName: profileText(params.companyName, rows[index].companyName, replaceProfile),
         clientTaxId: profileText(params.clientTaxId, rows[index].clientTaxId, replaceProfile),
+        cityZone: profileText(params.cityZone, rows[index].cityZone, replaceProfile),
+        address: profileText(params.address, rows[index].address, replaceProfile),
+        locationUrl: profileText(params.locationUrl, rows[index].locationUrl, replaceProfile),
+        addressReference: profileText(params.addressReference, rows[index].addressReference, replaceProfile),
         vehiclesJson: JSON.stringify(vehicles),
         vehicles,
         freeWashCredits: Number(rows[index].freeWashCredits) || 0,
@@ -355,6 +427,18 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
         lastUsedAt: nowIso,
       };
       await writeBlobCustomers(rows);
+      await syncCustomerIdentityToAppointments({
+        previousPhone: params.previousPhone || params.clientPhone,
+        clientName: params.clientName.trim(),
+        clientPhone: params.clientPhone.trim(),
+        clientType: params.clientType,
+        companyName: profileText(params.companyName, rows[index].companyName, replaceProfile),
+        clientTaxId: profileText(params.clientTaxId, rows[index].clientTaxId, replaceProfile),
+        cityZone: profileText(params.cityZone, rows[index].cityZone, replaceProfile),
+        address: profileText(params.address, rows[index].address, replaceProfile),
+        locationUrl: profileText(params.locationUrl, rows[index].locationUrl, replaceProfile),
+        addressReference: profileText(params.addressReference, rows[index].addressReference, replaceProfile),
+      });
       return hydrateCustomer(rows[index]);
     }
 
@@ -366,6 +450,10 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
       clientType: params.clientType,
       companyName: params.companyName?.trim() || null,
       clientTaxId: params.clientTaxId?.trim() || null,
+      cityZone: params.cityZone?.trim() || null,
+      address: params.address?.trim() || null,
+      locationUrl: params.locationUrl?.trim() || null,
+      addressReference: params.addressReference?.trim() || null,
       vehiclesJson: JSON.stringify(vehicles),
       vehicles,
       freeWashCredits: 0,
@@ -378,6 +466,18 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
     };
     rows.push(created);
     await writeBlobCustomers(rows);
+    await syncCustomerIdentityToAppointments({
+      previousPhone: params.clientPhone,
+      clientName: created.clientName,
+      clientPhone: created.clientPhone,
+      clientType: created.clientType,
+      companyName: created.companyName,
+      clientTaxId: created.clientTaxId,
+      cityZone: created.cityZone,
+      address: created.address,
+      locationUrl: created.locationUrl,
+      addressReference: created.addressReference,
+    });
     return hydrateCustomer(created);
   }
 
@@ -408,6 +508,10 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
     clientType: params.clientType,
     companyName: profileText(params.companyName, existing[0]?.companyName, replaceProfile),
     clientTaxId: profileText(params.clientTaxId, existing[0]?.clientTaxId, replaceProfile),
+    cityZone: profileText(params.cityZone, existing[0]?.cityZone, replaceProfile),
+    address: profileText(params.address, existing[0]?.address, replaceProfile),
+    locationUrl: profileText(params.locationUrl, existing[0]?.locationUrl, replaceProfile),
+    addressReference: profileText(params.addressReference, existing[0]?.addressReference, replaceProfile),
     vehiclesJson: JSON.stringify(vehicles),
     lastUsedAt: new Date(),
   };
@@ -425,7 +529,22 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
   }
 
   const matched = await db.select().from(customers).where(eq(customers.phoneKey, nextKey)).limit(1);
-  return matched[0] ? hydrateCustomer(matched[0]) : null;
+  const saved = matched[0] ? hydrateCustomer(matched[0]) : null;
+  if (saved) {
+    await syncCustomerIdentityToAppointments({
+      previousPhone: params.previousPhone || params.clientPhone,
+      clientName: saved.clientName,
+      clientPhone: saved.clientPhone,
+      clientType: (saved.clientType || params.clientType) as UpsertCustomerProfileParams["clientType"],
+      companyName: saved.companyName || null,
+      clientTaxId: saved.clientTaxId || null,
+      cityZone: String(saved.cityZone || "") || null,
+      address: String(saved.address || "") || null,
+      locationUrl: String(saved.locationUrl || "") || null,
+      addressReference: String(saved.addressReference || "") || null,
+    });
+  }
+  return saved;
 }
 
 export type HydratedCustomer = {

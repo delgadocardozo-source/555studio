@@ -14,6 +14,10 @@ export type CustomerFormSeed = {
   clientType?: string | null;
   companyName?: string | null;
   clientTaxId?: string | null;
+  cityZone?: string | null;
+  address?: string | null;
+  addressReference?: string | null;
+  locationUrl?: string | null;
   vehicles?: Array<{
     id?: string;
     type: CustomerVehicleType;
@@ -28,6 +32,8 @@ type VehicleDraft = {
   model: string;
   plate: string;
 };
+
+const ZONES = ["Asuncion", "Luque", "Mariano Roque Alonso", "San Lorenzo"] as const;
 
 const TYPE_OPTIONS: Array<{ value: ClientType; label: string }> = [
   { value: "particular", label: "Particular" },
@@ -65,6 +71,14 @@ export function CustomerFormDialog({
   );
   const [companyName, setCompanyName] = useState(seed?.companyName || "");
   const [clientTaxId, setClientTaxId] = useState(seed?.clientTaxId || "");
+  const [cityZone, setCityZone] = useState<(typeof ZONES)[number]>(
+    ZONES.includes(seed?.cityZone as (typeof ZONES)[number])
+      ? (seed?.cityZone as (typeof ZONES)[number])
+      : "Asuncion"
+  );
+  const [address, setAddress] = useState(seed?.address || "");
+  const [addressReference, setAddressReference] = useState(seed?.addressReference || "");
+  const [locationUrl, setLocationUrl] = useState(seed?.locationUrl || "");
   const [vehicles, setVehicles] = useState<VehicleDraft[]>(
     seed?.vehicles && seed.vehicles.length > 0
       ? seed.vehicles.map((v) => ({
@@ -80,6 +94,8 @@ export function CustomerFormDialog({
     onSuccess: () => {
       toast.success(mode === "create" ? "Cliente agregado" : "Cliente actualizado");
       utils.customers.invalidate();
+      utils.appointments.invalidate();
+      utils.reengage.invalidate();
       onClose();
     },
     onError: (err) => toast.error(err.message || "No se pudo guardar"),
@@ -107,6 +123,10 @@ export function CustomerFormDialog({
       clientType,
       companyName: companyName.trim() || null,
       clientTaxId: clientTaxId.trim() || null,
+      cityZone,
+      address: address.trim() || null,
+      addressReference: addressReference.trim() || null,
+      locationUrl: locationUrl.trim() || null,
       vehicles: garage,
       replaceVehicles: true,
       replaceProfile: true,
@@ -173,6 +193,51 @@ export function CustomerFormDialog({
             <input
               value={clientTaxId}
               onChange={(e) => setClientTaxId(e.target.value)}
+              className={fieldClass}
+            />
+          </label>
+        </div>
+
+        <div className="space-y-2 rounded-xl border border-slate-800 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-slate-500">Ubicación</p>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">Zona</span>
+            <select
+              value={cityZone}
+              onChange={(e) => setCityZone(e.target.value as (typeof ZONES)[number])}
+              className={fieldClass}
+            >
+              {ZONES.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">Dirección</span>
+            <input
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Calle y número"
+              className={fieldClass}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">Referencia</span>
+            <input
+              value={addressReference}
+              onChange={(e) => setAddressReference(e.target.value)}
+              placeholder="Portón, esquina…"
+              className={fieldClass}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">Link de Maps</span>
+            <input
+              value={locationUrl}
+              onChange={(e) => setLocationUrl(e.target.value)}
+              placeholder="https://"
               className={fieldClass}
             />
           </label>
@@ -283,7 +348,7 @@ export function CustomersCrmPanel() {
             Clientes · CRM
           </h2>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Vista 360: lavados, cobrado, deuda, fidelidad y garaje. Podés agregar y editar la ficha.
+            Vista 360. Editar cambia el nombre, el WhatsApp del recontacto y la ubicación.
           </p>
         </div>
         <button
@@ -340,6 +405,12 @@ export function CustomersCrmPanel() {
                     {c.clientTaxId ? ` · RUC ${c.clientTaxId}` : ""}
                     {c.companyName ? ` · ${c.companyName}` : ""}
                   </p>
+                  {c.address ? (
+                    <p className="text-[11px] text-slate-500 truncate">
+                      {c.cityZone ? `${c.cityZone} · ` : ""}
+                      {c.address}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {c.openDebtCount > 0 && (
@@ -358,11 +429,15 @@ export function CustomersCrmPanel() {
                           clientType: c.clientType,
                           companyName: c.companyName,
                           clientTaxId: c.clientTaxId,
+                          cityZone: c.cityZone,
+                          address: c.address,
+                          addressReference: c.addressReference,
+                          locationUrl: c.locationUrl,
                           vehicles: c.vehicles,
                         },
                       })
                     }
-                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-700 text-slate-200"
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white"
                   >
                     <Pencil className="w-3 h-3" />
                     Editar
@@ -464,7 +539,7 @@ export function AgendaCustomersDirectory({
         </button>
       </div>
       <p className="text-xs text-slate-300">
-        Agregá o editá nombre, WhatsApp, empresa, RUC y vehículos. Esos datos se reutilizan al agendar.
+        Editá nombre, WhatsApp, ubicación, RUC y vehículos. El teléfono nuevo es el del recontacto.
       </p>
 
       {customers.length === 0 ? (
