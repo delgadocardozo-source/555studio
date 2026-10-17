@@ -3,8 +3,10 @@ import { computeLoyaltyStatus, applyFreeWashToVehicles, LOYALTY_WASHES_PER_REWAR
 import { mergeGarageVehicles, sanitizeCustomerVehicles } from "../shared/customerGarage";
 import {
   selectReengageCandidates,
+  selectFirstContactCandidates,
   daysBetween,
   buildReengageWhatsAppText,
+  buildFirstContactWhatsAppText,
   PUBLIC_BOOKING_URL,
 } from "../shared/reengage";
 
@@ -169,5 +171,85 @@ describe("reengage", () => {
     expect(text).toContain("2026-09-28");
     expect(text).toContain(PUBLIC_BOOKING_URL);
     expect(text).toContain("reservar online");
+  });
+});
+
+describe("primer contacto", () => {
+  const normalizePhoneKey = (p: string) => {
+    const d = p.replace(/\D/g, "").replace(/^0/, "");
+    return d.startsWith("595") ? d : `595${d}`;
+  };
+  const today = "2026-10-15";
+
+  it("incluye a quien nunca lavó, aunque solo tenga turnos cancelados", () => {
+    const candidates = selectFirstContactCandidates({
+      today,
+      appointments: [
+        {
+          clientPhone: "0981555666",
+          scheduledDate: "2026-10-01",
+          status: "cancelado",
+        },
+      ],
+      customers: [
+        { phoneKey: "595981555666", clientName: "Luz", clientPhone: "0981555666" },
+        { phoneKey: "595981777888", clientName: "Ana", clientPhone: "0981777888" },
+      ],
+      normalizePhoneKey,
+    });
+    expect(candidates.map((c) => c.clientName)).toEqual(["Ana", "Luz"]);
+  });
+
+  it("excluye a quien ya lavó o tiene un turno próximo", () => {
+    const candidates = selectFirstContactCandidates({
+      today,
+      appointments: [
+        {
+          clientPhone: "0981111222",
+          scheduledDate: "2026-10-01",
+          status: "finalizado",
+        },
+        {
+          clientPhone: "0981333444",
+          scheduledDate: "2026-10-20",
+          status: "pendiente",
+        },
+      ],
+      customers: [
+        { phoneKey: "595981111222", clientName: "Ana", clientPhone: "0981111222" },
+        { phoneKey: "595981333444", clientName: "Bob", clientPhone: "0981333444" },
+        { phoneKey: "595981555666", clientName: "Luz", clientPhone: "0981555666" },
+      ],
+      normalizePhoneKey,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].clientName).toBe("Luz");
+  });
+
+  it("sigue en la lista después de escribirle", () => {
+    const candidates = selectFirstContactCandidates({
+      today,
+      appointments: [],
+      customers: [
+        {
+          phoneKey: "595981555666",
+          clientName: "Luz",
+          clientPhone: "0981555666",
+          lastReminderAt: "2026-10-14T15:00:00.000Z",
+        },
+      ],
+      normalizePhoneKey,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].lastReminderAt).toContain("2026-10-14");
+  });
+
+  it("invita al primer lavado sin hablar de uno anterior", () => {
+    const text = buildFirstContactWhatsAppText({ clientName: "Luz Aguilera" });
+    expect(text).toContain("Luz");
+    expect(text).toContain("primer lavado");
+    expect(text).toContain(PUBLIC_BOOKING_URL);
+    expect(text.toLowerCase()).not.toContain("hace una semana");
+    expect(text.toLowerCase()).not.toContain("limpiamos");
   });
 });

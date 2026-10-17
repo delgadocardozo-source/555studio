@@ -15,7 +15,7 @@ import {
   catalogPriceForVehicle,
   withLoyaltyFreeNote,
 } from "@shared/loyalty";
-import { buildReengageWhatsAppText } from "@shared/reengage";
+import { buildFirstContactWhatsAppText, buildReengageWhatsAppText } from "@shared/reengage";
 import { z } from "zod";
 import { issueSignedToken, put as putBlob, presignUrl } from "@vercel/blob";
 import { TRPCError } from "@trpc/server";
@@ -670,9 +670,11 @@ export const appRouter = router({
       .query(async ({ input }) => await erpControlDb.getErpControlTower(input || {})),
   }),
 
-  /** Recontacto post-lavado (7 días) — cola operativa + WhatsApp. */
+  /** Recontacto post-lavado (7 días) y primer contacto de quien aún no lavó. */
   reengage: router({
     list: staffProcedure.query(async () => await db.listReengageCandidates()),
+
+    firstContacts: staffProcedure.query(async () => await db.listFirstContactCandidates()),
 
     markSent: staffProcedure
       .input(z.object({ phone: z.string().min(6) }))
@@ -691,6 +693,12 @@ export const appRouter = router({
       .input(z.object({ clientName: z.string(), lastWashDate: z.string() }))
       .query(({ input }) => ({
         text: buildReengageWhatsAppText(input),
+      })),
+
+    previewFirstContact: staffProcedure
+      .input(z.object({ clientName: z.string() }))
+      .query(({ input }) => ({
+        text: buildFirstContactWhatsAppText(input),
       })),
   }),
 

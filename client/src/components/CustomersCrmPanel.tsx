@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { Link } from "wouter";
-import { Car, Gift, HandCoins, Pencil, Plus, Search, Trash2, Users, X } from "lucide-react";
+import { Car, Gift, HandCoins, MessageCircle, Pencil, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { formatGs } from "@shared/cashLedger";
 import type { CustomerVehicleType } from "@shared/customerGarage";
+import { buildFirstContactWhatsAppText, whatsAppChatUrl } from "@shared/reengage";
 
 type ClientType = "particular" | "oficina" | "empresa_flota";
 
@@ -330,6 +331,7 @@ export function CustomerFormDialog({
  * Alta y edición de ficha desde el ERP.
  */
 export function CustomersCrmPanel() {
+  const utils = trpc.useUtils();
   const [query, setQuery] = useState("");
   const [editor, setEditor] = useState<null | { mode: "create" | "edit"; seed?: CustomerFormSeed }>(
     null
@@ -337,6 +339,13 @@ export function CustomersCrmPanel() {
   const { data: rows = [], isLoading } = trpc.customers.crmList.useQuery({
     query: query.trim() || undefined,
     limit: 80,
+  });
+  const markMut = trpc.reengage.markSent.useMutation({
+    onSuccess: () => {
+      utils.reengage.invalidate();
+      utils.customers.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   return (
@@ -486,15 +495,33 @@ export function CustomersCrmPanel() {
                 </p>
               )}
 
-              {c.openDebtCount > 0 && (
-                <Link
-                  href="/erp/deudores"
-                  className="inline-flex items-center gap-1 mt-2 text-[10px] font-bold text-amber-300"
-                >
-                  <HandCoins className="w-3 h-3" />
-                  Ver en deudores
-                </Link>
-              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {c.washesTotal === 0 && c.upcomingCount === 0 && (
+                  <a
+                    href={whatsAppChatUrl(
+                      c.clientPhone,
+                      buildFirstContactWhatsAppText({ clientName: c.clientName })
+                    )}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => markMut.mutate({ phone: c.clientPhone })}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white"
+                  >
+                    <MessageCircle className="w-3 h-3" />
+                    Primer contacto
+                    {c.lastReminderAt ? " · contactado" : ""}
+                  </a>
+                )}
+                {c.openDebtCount > 0 && (
+                  <Link
+                    href="/erp/deudores"
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-300"
+                  >
+                    <HandCoins className="w-3 h-3" />
+                    Ver en deudores
+                  </Link>
+                )}
+              </div>
             </div>
           ))}
         </div>
