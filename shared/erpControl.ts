@@ -120,7 +120,7 @@ export function computeErpControlSnapshot(
       id: "recontacto",
       severity: "info",
       title: `${input.recontactoPendiente} cliente(s) para recontacto`,
-      detail: "Pasaron ~7 días del lavado sin turno futuro.",
+      detail: "Recontacto a 7 días y primer contacto de quienes todavía no lavaron.",
     });
   }
 

@@ -24,7 +24,12 @@ import {
   type CustomerVehicleInput,
 } from "../shared/customerGarage";
 import { computeLoyaltyStatus } from "../shared/loyalty";
-import { selectReengageCandidates, type ReengageCandidate } from "../shared/reengage";
+import {
+  selectFirstContactCandidates,
+  selectReengageCandidates,
+  type FirstContactCandidate,
+  type ReengageCandidate,
+} from "../shared/reengage";
 import { ENV } from './_core/env';
 
 export interface ServiceVehicleItem {
@@ -758,7 +763,7 @@ export async function markCustomerReminderSent(phone: string) {
   return hydrateCustomer(matched[0]);
 }
 
-export async function listReengageCandidates(today?: string): Promise<ReengageCandidate[]> {
+async function loadContactQueueInput(today?: string) {
   const day = today || new Date().toISOString().slice(0, 10);
   const appointments = await listAppointments({});
   let customerRows: StoredCustomer[] = [];
@@ -768,7 +773,7 @@ export async function listReengageCandidates(today?: string): Promise<ReengageCa
     const db = await getDb();
     customerRows = db ? await db.select().from(customers) : [];
   }
-  return selectReengageCandidates({
+  return {
     today: day,
     appointments: appointments.map((a) => ({
       clientPhone: a.clientPhone,
@@ -787,7 +792,15 @@ export async function listReengageCandidates(today?: string): Promise<ReengageCa
         : null,
     })),
     normalizePhoneKey,
-  });
+  };
+}
+
+export async function listReengageCandidates(today?: string): Promise<ReengageCandidate[]> {
+  return selectReengageCandidates(await loadContactQueueInput(today));
+}
+
+export async function listFirstContactCandidates(today?: string): Promise<FirstContactCandidate[]> {
+  return selectFirstContactCandidates(await loadContactQueueInput(today));
 }
 
 function matchFilters(row: StoredAppointment, filters: AppointmentFilters) {
