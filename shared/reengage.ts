@@ -38,6 +38,35 @@ export function buildReengageWhatsAppText(params: {
   );
 }
 
+export interface FirstContactCandidate {
+  phoneKey: string;
+  clientName: string;
+  clientPhone: string;
+  lastReminderAt: string | null;
+}
+
+/** Invitación al primer lavado. No menciona un lavado anterior. */
+export function buildFirstContactWhatsAppText(params: {
+  clientName: string;
+  bookingUrl?: string;
+}): string {
+  const first = String(params.clientName || "").trim().split(/\s+/)[0] || "hola";
+  const url = String(params.bookingUrl || PUBLIC_BOOKING_URL).trim();
+  return (
+    `¡Hola ${first}! Somos *555 Detail Studio*.\n\n` +
+    `Queremos invitarte a tu primer lavado.\n` +
+    `Podés responder este mensaje o reservar online:\n` +
+    `${url}\n\n` +
+    `¡Te esperamos!`
+  );
+}
+
+export function whatsAppChatUrl(phone: string, text: string): string {
+  const digits = phone.replace(/\D/g, "");
+  const withCountry = digits.startsWith("595") ? digits : `595${digits.replace(/^0/, "")}`;
+  return `https://wa.me/${withCountry}?text=${encodeURIComponent(text)}`;
+}
+
 /**
  * Clientes con último lavado finalizado hace al menos `days`,
  * sin turno futuro pendiente.
@@ -117,4 +146,58 @@ export function selectReengageCandidates(params: {
   }
 
   return out.sort((a, b) => b.daysSinceWash - a.daysSinceWash);
+}
+
+/**
+ * Clientes que todavía no tienen un lavado finalizado
+ * y no tienen un turno próximo (pendiente o en curso).
+ * Escribirles no los saca: salen solo cuando reservan o cuando lavan.
+ */
+export function selectFirstContactCandidates(params: {
+  today: string;
+  appointments: Array<{
+    clientPhone: string;
+    scheduledDate: string;
+    status: string;
+  }>;
+  customers: Array<{
+    phoneKey: string;
+    clientName: string;
+    clientPhone: string;
+    lastReminderAt?: string | null;
+  }>;
+  normalizePhoneKey: (phone: string) => string;
+}): FirstContactCandidate[] {
+  const washed = new Set<string>();
+  const upcoming = new Set<string>();
+
+  for (const ap of params.appointments) {
+    const key = params.normalizePhoneKey(ap.clientPhone);
+    if (!key) continue;
+    if (ap.status === "finalizado") washed.add(key);
+    if (
+      ap.status !== "finalizado" &&
+      ap.status !== "cancelado" &&
+      ap.scheduledDate >= params.today
+    ) {
+      upcoming.add(key);
+    }
+  }
+
+  const out: FirstContactCandidate[] = [];
+  for (const cust of params.customers) {
+    const phoneKey = params.normalizePhoneKey(cust.phoneKey || cust.clientPhone);
+    if (!phoneKey || washed.has(phoneKey) || upcoming.has(phoneKey)) continue;
+    const name = String(cust.clientName || "").trim();
+    const phone = String(cust.clientPhone || "").trim();
+    if (!name || !phone) continue;
+    out.push({
+      phoneKey,
+      clientName: name,
+      clientPhone: phone,
+      lastReminderAt: cust.lastReminderAt ? String(cust.lastReminderAt) : null,
+    });
+  }
+
+  return out.sort((a, b) => a.clientName.localeCompare(b.clientName, "es"));
 }

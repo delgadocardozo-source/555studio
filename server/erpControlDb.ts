@@ -22,14 +22,16 @@ export async function getErpControlTower(params?: {
   const periodLabel =
     dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : dateFrom ? `Desde ${dateFrom}` : "Todo";
 
-  const [managerial, cashStats, debtStats, invStats, payStats, reengage] = await Promise.all([
-    agendaDb.getManagerialDashboard({ dateFrom, dateTo }),
-    cashDb.getCashLedgerStats({ dateFrom, dateTo }),
-    receivablesDb.getDebtStats(),
-    inventoryDb.getInventoryStats(),
-    payrollDb.getPayrollStats({ dateFrom, dateTo }),
-    agendaDb.listReengageCandidates(),
-  ]);
+  const [managerial, cashStats, debtStats, invStats, payStats, reengage, firstContacts] =
+    await Promise.all([
+      agendaDb.getManagerialDashboard({ dateFrom, dateTo }),
+      cashDb.getCashLedgerStats({ dateFrom, dateTo }),
+      receivablesDb.getDebtStats(),
+      inventoryDb.getInventoryStats(),
+      payrollDb.getPayrollStats({ dateFrom, dateTo }),
+      agendaDb.listReengageCandidates(),
+      agendaDb.listFirstContactCandidates(),
+    ]);
 
   return computeErpControlSnapshot(
     {
@@ -44,7 +46,7 @@ export async function getErpControlTower(params?: {
       lowStockCount: invStats.lowStockCount || 0,
       lavadosPeriodo: managerial.serviciosLavados || 0,
       autosLavadosPeriodo: managerial.autosLavados || 0,
-      recontactoPendiente: reengage.length,
+      recontactoPendiente: reengage.length + firstContacts.length,
       nominaPagadaGs: payStats.totalPaid || 0,
     },
     { periodLabel, dateFrom, dateTo }
