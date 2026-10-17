@@ -7,6 +7,7 @@ import {
   daysBetween,
   buildReengageWhatsAppText,
   buildFirstContactWhatsAppText,
+  WASH_PHOTO_REENGAGE_LINE,
   PUBLIC_BOOKING_URL,
 } from "../shared/reengage";
 
@@ -171,6 +172,65 @@ describe("reengage", () => {
     expect(text).toContain("2026-09-28");
     expect(text).toContain(PUBLIC_BOOKING_URL);
     expect(text).toContain("reservar online");
+    expect(text).not.toContain(WASH_PHOTO_REENGAGE_LINE);
+  });
+
+  it("guarda la foto del último lavado y la suma al mensaje solo si se elige", () => {
+    const today = "2026-10-15";
+    const photo = "https://cdn.example.com/555-detail-agenda/wash-photos/ana.jpg";
+    const candidates = selectReengageCandidates({
+      today,
+      appointments: [
+        {
+          clientPhone: "0981111222",
+          clientName: "Ana",
+          scheduledDate: "2026-10-01",
+          status: "finalizado",
+          washPhotoUrl: "https://cdn.example.com/vieja.jpg",
+        },
+        {
+          clientPhone: "0981111222",
+          clientName: "Ana",
+          scheduledDate: "2026-10-08",
+          status: "finalizado",
+          washPhotoUrl: photo,
+        },
+        {
+          clientPhone: "0981333444",
+          clientName: "Bob",
+          scheduledDate: "2026-10-08",
+          status: "finalizado",
+        },
+      ],
+      customers: [
+        { phoneKey: "595981111222", clientName: "Ana", clientPhone: "0981111222" },
+        { phoneKey: "595981333444", clientName: "Bob", clientPhone: "0981333444" },
+      ],
+      normalizePhoneKey: (p) => {
+        const d = p.replace(/\D/g, "").replace(/^0/, "");
+        return d.startsWith("595") ? d : `595${d}`;
+      },
+    });
+    const ana = candidates.find((c) => c.clientName === "Ana");
+    const bob = candidates.find((c) => c.clientName === "Bob");
+    expect(ana?.washPhotoUrl).toBe(photo);
+    expect(bob?.washPhotoUrl).toBeNull();
+
+    const withPhoto = buildReengageWhatsAppText({
+      clientName: "Ana",
+      lastWashDate: "2026-10-08",
+      washPhotoUrl: photo,
+    });
+    expect(withPhoto).toContain(WASH_PHOTO_REENGAGE_LINE);
+    expect(withPhoto).toContain(photo);
+    expect(withPhoto).toContain("Hace una semana");
+
+    const plain = buildReengageWhatsAppText({
+      clientName: "Ana",
+      lastWashDate: "2026-10-08",
+    });
+    expect(plain).not.toContain(WASH_PHOTO_REENGAGE_LINE);
+    expect(plain).not.toContain(photo);
   });
 });
 

@@ -780,6 +780,7 @@ async function loadContactQueueInput(today?: string) {
       clientName: a.clientName,
       scheduledDate: a.scheduledDate,
       status: a.status,
+      washPhotoUrl: a.washPhotoUrl || null,
     })),
     customers: customerRows.map((c) => ({
       phoneKey: c.phoneKey,
@@ -1010,6 +1011,8 @@ export interface FinalizePaymentParams {
   paymentMethod?: "efectivo" | "comprobante_digital";
   paymentReceiptUrl?: string | null;
   paymentReceiptName?: string | null;
+  washPhotoUrl?: string | null;
+  washPhotoName?: string | null;
 }
 
 export async function finalizeAppointmentWithPayment(params: FinalizePaymentParams) {
@@ -1045,6 +1048,10 @@ export async function finalizeAppointmentWithPayment(params: FinalizePaymentPara
     paymentReceiptUrl: params.paymentStatus === "pagado" ? params.paymentReceiptUrl ?? null : null,
     paymentReceiptName: params.paymentStatus === "pagado" ? params.paymentReceiptName ?? null : null,
     paymentDeclaredAt: new Date(),
+    washPhotoUrl:
+      params.washPhotoUrl === undefined ? existing.washPhotoUrl ?? null : params.washPhotoUrl || null,
+    washPhotoName:
+      params.washPhotoName === undefined ? existing.washPhotoName ?? null : params.washPhotoName || null,
   };
 
   if (isVercelBlobRuntime()) {
