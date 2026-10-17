@@ -2323,7 +2323,6 @@ export default function Home() {
                         type="file"
                         ref={fileInputRef}
                         accept="image/*,application/pdf"
-                        capture="environment"
                         onChange={handleReceiptFileChange}
                         className="hidden"
                       />
@@ -2367,7 +2366,7 @@ export default function Home() {
                         >
                           <UploadCloud className="w-6 h-6 text-blue-400 mx-auto mb-1" />
                           <div className="text-xs font-bold text-white">
-                            {finalizeData.isUploading ? "Cargando archivo..." : "Tomar foto o subir captura"}
+                            {finalizeData.isUploading ? "Cargando archivo..." : "Elegir de la galería"}
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">
                             Requerido para validar la rendición en caja
