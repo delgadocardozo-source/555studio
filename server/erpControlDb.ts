@@ -57,7 +57,7 @@ export async function listCustomerCrm(params?: {
 }): Promise<CustomerCrmCard[]> {
   const limit = params?.limit ?? 40;
   const [customers, appointments, openDebts] = await Promise.all([
-    agendaDb.searchCustomers(params?.query || ""),
+    agendaDb.searchCustomers(params?.query || "", params?.limit ?? 80),
     agendaDb.listAppointments({}),
     receivablesDb.listOpenDebts(),
   ]);
@@ -72,6 +72,10 @@ export async function listCustomerCrm(params?: {
         companyName: c.companyName,
         clientTaxId: c.clientTaxId,
         vehicles: c.vehicles || [],
+        cityZone: c.cityZone,
+        address: c.address,
+        addressReference: c.addressReference,
+        locationUrl: c.locationUrl,
         freeWashCredits: c.freeWashCredits,
         lastWashAt: c.lastWashAt,
         lastReminderAt: c.lastReminderAt,
@@ -83,6 +87,10 @@ export async function listCustomerCrm(params?: {
         status: a.status,
         paymentStatus: a.paymentStatus,
         servicePrice: a.servicePrice,
+        cityZone: a.cityZone,
+        address: a.address,
+        addressReference: a.addressReference,
+        locationUrl: a.locationUrl,
       })),
       openDebts,
       normalizePhoneKey: agendaDb.normalizePhoneKey,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeErpControlSnapshot } from "../shared/erpControl";
-import { buildCustomerCrmCard, rankCustomerCrmCards } from "../shared/customerCrm";
+import { buildCustomerCrmCard, rankCustomerCrmCards, resolveClientLocation } from "../shared/customerCrm";
 
 describe("erp control tower", () => {
   it("alerta cuando caja está por debajo de cobros de agenda", () => {
@@ -81,11 +81,36 @@ describe("customer crm", () => {
     expect(card.openDebtGs).toBe(90000);
     expect(card.washesTotal).toBe(2);
     expect(card.vehicles).toHaveLength(1);
+    expect(card.address).toBe("");
 
     const ranked = rankCustomerCrmCards([
       { ...card, phoneKey: "b", openDebtGs: 0, lifetimePaidGs: 100 },
       card,
     ]);
     expect(ranked[0].phoneKey).toBe("595981111222");
+  });
+
+  it("muestra la ubicación guardada y, si no hay, la del último turno", () => {
+    const fromProfile = resolveClientLocation({
+      profile: { cityZone: "Luque", address: "Calle 1", addressReference: "portón azul", locationUrl: "" },
+      appointments: [{ scheduledDate: "2026-10-01", status: "finalizado", address: "Vieja" }],
+    });
+    expect(fromProfile.address).toBe("Calle 1");
+    expect(fromProfile.cityZone).toBe("Luque");
+
+    const fromVisit = resolveClientLocation({
+      profile: { address: "" },
+      appointments: [
+        { scheduledDate: "2026-09-01", status: "finalizado", cityZone: "Asuncion", address: "Primera" },
+        { scheduledDate: "2026-10-02", status: "finalizado", cityZone: "San Lorenzo", address: "Última", addressReference: "esquina" },
+        { scheduledDate: "2026-10-03", status: "cancelado", address: "No" },
+      ],
+    });
+    expect(fromVisit).toEqual({
+      cityZone: "San Lorenzo",
+      address: "Última",
+      addressReference: "esquina",
+      locationUrl: "",
+    });
   });
 });

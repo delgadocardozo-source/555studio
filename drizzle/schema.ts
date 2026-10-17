@@ -86,6 +86,10 @@ export const customers = mysqlTable("customers", {
   clientType: clientTypeEnum.default("particular").notNull(),
   companyName: varchar("companyName", { length: 160 }),
   clientTaxId: varchar("clientTaxId", { length: 40 }), // RUC, siempre opcional
+  cityZone: varchar("cityZone", { length: 40 }),
+  address: text("address"),
+  locationUrl: varchar("locationUrl", { length: 1024 }),
+  addressReference: text("addressReference"),
   /** Garaje JSON: [{id,type,model,plate}] */
   vehiclesJson: text("vehiclesJson"),
   /** Créditos de lavado gratis acumulados (fidelización). */

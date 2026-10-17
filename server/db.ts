@@ -291,14 +291,100 @@ export interface UpsertCustomerProfileParams {
   clientType: "particular" | "oficina" | "empresa_flota";
   companyName?: string | null;
   clientTaxId?: string | null;
+  cityZone?: string | null;
+  address?: string | null;
+  locationUrl?: string | null;
+  addressReference?: string | null;
   vehicles?: CustomerVehicleInput[] | null;
   /** Si true, reemplaza el garaje completo; si false/omit, mergea. */
   replaceVehicles?: boolean;
+  /**
+   * Teléfono anterior cuando se edita la ficha y cambia el WhatsApp.
+   * Sin esto, un teléfono nuevo crea otra ficha.
+   */
+  previousPhone?: string | null;
+  /** La ficha manda: empresa y RUC vacíos se borran (no se conservan). */
+  replaceProfile?: boolean;
+}
+
+function profileText(
+  incoming: string | null | undefined,
+  previous: string | null | undefined,
+  replaceProfile: boolean
+) {
+  if (replaceProfile) return incoming?.trim() || null;
+  return incoming?.trim() || previous || null;
+}
+
+async function syncCustomerIdentityToAppointments(params: {
+  previousPhone: string;
+  clientName: string;
+  clientPhone: string;
+  clientType: UpsertCustomerProfileParams["clientType"];
+  companyName: string | null;
+  clientTaxId: string | null;
+  cityZone: string | null;
+  address: string | null;
+  locationUrl: string | null;
+  addressReference: string | null;
+}) {
+  const keys = new Set(
+    [normalizePhoneKey(params.previousPhone), normalizePhoneKey(params.clientPhone)].filter(Boolean)
+  );
+  const contact = {
+    clientName: params.clientName,
+    clientPhone: params.clientPhone,
+    clientType: params.clientType,
+    companyName: params.companyName,
+    clientTaxId: params.clientTaxId,
+  };
+  const place = params.address
+    ? {
+        cityZone: (params.cityZone || "Asuncion") as "Asuncion" | "Luque" | "Mariano Roque Alonso" | "San Lorenzo",
+        address: params.address,
+        locationUrl: params.locationUrl,
+        addressReference: params.addressReference,
+      }
+    : null;
+
+  const matches = (phone: string) => keys.has(normalizePhoneKey(phone));
+
+  if (isVercelBlobRuntime()) {
+    await withAppointmentsLock(async () => {
+      const rows = await readBlobAppointments();
+      let changed = false;
+      const next = rows.map((row) => {
+        if (!matches(String(row.clientPhone || ""))) return row;
+        changed = true;
+        const open = row.status !== "finalizado" && row.status !== "cancelado";
+        return normalizeAppointmentRow({
+          ...row,
+          ...contact,
+          ...(open && place ? place : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      if (changed) await writeBlobAppointments(next);
+    });
+    return;
+  }
+
+  const rows = await listAppointments({});
+  for (const row of rows) {
+    if (!matches(String(row.clientPhone || ""))) continue;
+    const open = row.status !== "finalizado" && row.status !== "cancelado";
+    await updateAppointmentDetails(Number(row.id), {
+      ...contact,
+      ...(open && place ? place : {}),
+    });
+  }
 }
 
 export async function upsertCustomerProfile(params: UpsertCustomerProfileParams) {
-  const phoneKey = normalizePhoneKey(params.clientPhone);
-  if (!phoneKey) return null;
+  const nextKey = normalizePhoneKey(params.clientPhone);
+  if (!nextKey) throw new Error("WhatsApp inválido");
+  const lookupKey = normalizePhoneKey(params.previousPhone || "") || nextKey;
+  const replaceProfile = Boolean(params.replaceProfile);
 
   const incomingVehicles = params.vehicles
     ? sanitizeCustomerVehicles(params.vehicles)
@@ -306,7 +392,13 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
 
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
-    const index = rows.findIndex((row) => row.phoneKey === phoneKey);
+    if (nextKey !== lookupKey && rows.some((row) => row.phoneKey === nextKey)) {
+      throw new Error("Ya existe un cliente con ese WhatsApp");
+    }
+    const index = rows.findIndex((row) => row.phoneKey === lookupKey);
+    if (index < 0 && params.previousPhone?.trim()) {
+      throw new Error("No se encontró el cliente a editar");
+    }
     const nowIso = new Date().toISOString();
     if (index >= 0) {
       const prevVehicles = parseVehiclesJson(rows[index].vehiclesJson ?? rows[index].vehicles);
@@ -318,12 +410,16 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
             : mergeGarageVehicles(prevVehicles, incomingVehicles);
       rows[index] = {
         ...rows[index],
-        phoneKey,
+        phoneKey: nextKey,
         clientName: params.clientName.trim(),
         clientPhone: params.clientPhone.trim(),
         clientType: params.clientType,
-        companyName: params.companyName?.trim() || rows[index].companyName || null,
-        clientTaxId: params.clientTaxId?.trim() || rows[index].clientTaxId || null,
+        companyName: profileText(params.companyName, rows[index].companyName, replaceProfile),
+        clientTaxId: profileText(params.clientTaxId, rows[index].clientTaxId, replaceProfile),
+        cityZone: profileText(params.cityZone, rows[index].cityZone, replaceProfile),
+        address: profileText(params.address, rows[index].address, replaceProfile),
+        locationUrl: profileText(params.locationUrl, rows[index].locationUrl, replaceProfile),
+        addressReference: profileText(params.addressReference, rows[index].addressReference, replaceProfile),
         vehiclesJson: JSON.stringify(vehicles),
         vehicles,
         freeWashCredits: Number(rows[index].freeWashCredits) || 0,
@@ -331,17 +427,33 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
         lastUsedAt: nowIso,
       };
       await writeBlobCustomers(rows);
+      await syncCustomerIdentityToAppointments({
+        previousPhone: params.previousPhone || params.clientPhone,
+        clientName: params.clientName.trim(),
+        clientPhone: params.clientPhone.trim(),
+        clientType: params.clientType,
+        companyName: profileText(params.companyName, rows[index].companyName, replaceProfile),
+        clientTaxId: profileText(params.clientTaxId, rows[index].clientTaxId, replaceProfile),
+        cityZone: profileText(params.cityZone, rows[index].cityZone, replaceProfile),
+        address: profileText(params.address, rows[index].address, replaceProfile),
+        locationUrl: profileText(params.locationUrl, rows[index].locationUrl, replaceProfile),
+        addressReference: profileText(params.addressReference, rows[index].addressReference, replaceProfile),
+      });
       return hydrateCustomer(rows[index]);
     }
 
     const vehicles = incomingVehicles || [];
     const created = {
-      phoneKey,
+      phoneKey: nextKey,
       clientName: params.clientName.trim(),
       clientPhone: params.clientPhone.trim(),
       clientType: params.clientType,
       companyName: params.companyName?.trim() || null,
       clientTaxId: params.clientTaxId?.trim() || null,
+      cityZone: params.cityZone?.trim() || null,
+      address: params.address?.trim() || null,
+      locationUrl: params.locationUrl?.trim() || null,
+      addressReference: params.addressReference?.trim() || null,
       vehiclesJson: JSON.stringify(vehicles),
       vehicles,
       freeWashCredits: 0,
@@ -354,13 +466,33 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
     };
     rows.push(created);
     await writeBlobCustomers(rows);
+    await syncCustomerIdentityToAppointments({
+      previousPhone: params.clientPhone,
+      clientName: created.clientName,
+      clientPhone: created.clientPhone,
+      clientType: created.clientType,
+      companyName: created.companyName,
+      clientTaxId: created.clientTaxId,
+      cityZone: created.cityZone,
+      address: created.address,
+      locationUrl: created.locationUrl,
+      addressReference: created.addressReference,
+    });
     return hydrateCustomer(created);
   }
 
   const db = await getDb();
   if (!db) return null;
 
-  const existing = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
+  if (nextKey !== lookupKey) {
+    const clash = await db.select().from(customers).where(eq(customers.phoneKey, nextKey)).limit(1);
+    if (clash[0]) throw new Error("Ya existe un cliente con ese WhatsApp");
+  }
+
+  const existing = await db.select().from(customers).where(eq(customers.phoneKey, lookupKey)).limit(1);
+  if (!existing[0] && params.previousPhone?.trim()) {
+    throw new Error("No se encontró el cliente a editar");
+  }
   const prevVehicles = existing[0] ? parseVehiclesJson(existing[0].vehiclesJson) : [];
   const vehicles =
     incomingVehicles == null
@@ -370,31 +502,49 @@ export async function upsertCustomerProfile(params: UpsertCustomerProfileParams)
         : mergeGarageVehicles(prevVehicles, incomingVehicles);
 
   const payload = {
-    phoneKey,
+    phoneKey: nextKey,
     clientName: params.clientName.trim(),
     clientPhone: params.clientPhone.trim(),
     clientType: params.clientType,
-    companyName: params.companyName?.trim() || null,
-    clientTaxId: params.clientTaxId?.trim() || null,
+    companyName: profileText(params.companyName, existing[0]?.companyName, replaceProfile),
+    clientTaxId: profileText(params.clientTaxId, existing[0]?.clientTaxId, replaceProfile),
+    cityZone: profileText(params.cityZone, existing[0]?.cityZone, replaceProfile),
+    address: profileText(params.address, existing[0]?.address, replaceProfile),
+    locationUrl: profileText(params.locationUrl, existing[0]?.locationUrl, replaceProfile),
+    addressReference: profileText(params.addressReference, existing[0]?.addressReference, replaceProfile),
     vehiclesJson: JSON.stringify(vehicles),
     lastUsedAt: new Date(),
   };
 
-  await db.insert(customers).values(payload).onDuplicateKeyUpdate({
-    set: {
-      clientName: payload.clientName,
-      clientPhone: payload.clientPhone,
-      clientType: payload.clientType,
-      companyName: payload.companyName,
-      clientTaxId: payload.clientTaxId || sql`COALESCE(values(clientTaxId), customers.clientTaxId)`,
-      vehiclesJson: payload.vehiclesJson,
-      lastUsedAt: new Date(),
-      updatedAt: new Date(),
-    },
-  });
+  if (existing[0]) {
+    await db
+      .update(customers)
+      .set({
+        ...payload,
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.phoneKey, lookupKey));
+  } else {
+    await db.insert(customers).values(payload);
+  }
 
-  const matched = await db.select().from(customers).where(eq(customers.phoneKey, phoneKey)).limit(1);
-  return matched[0] ? hydrateCustomer(matched[0]) : null;
+  const matched = await db.select().from(customers).where(eq(customers.phoneKey, nextKey)).limit(1);
+  const saved = matched[0] ? hydrateCustomer(matched[0]) : null;
+  if (saved) {
+    await syncCustomerIdentityToAppointments({
+      previousPhone: params.previousPhone || params.clientPhone,
+      clientName: saved.clientName,
+      clientPhone: saved.clientPhone,
+      clientType: (saved.clientType || params.clientType) as UpsertCustomerProfileParams["clientType"],
+      companyName: saved.companyName || null,
+      clientTaxId: saved.clientTaxId || null,
+      cityZone: String(saved.cityZone || "") || null,
+      address: String(saved.address || "") || null,
+      locationUrl: String(saved.locationUrl || "") || null,
+      addressReference: String(saved.addressReference || "") || null,
+    });
+  }
+  return saved;
 }
 
 export type HydratedCustomer = {
@@ -437,7 +587,8 @@ function hydrateCustomer(row: StoredCustomer | Customer): HydratedCustomer {
   } as HydratedCustomer;
 }
 
-export async function searchCustomers(query: string = "") {
+export async function searchCustomers(query: string = "", limit = 20) {
+  const take = Math.min(200, Math.max(1, limit));
   const clean = query.trim().toLowerCase();
   if (isVercelBlobRuntime()) {
     const rows = await readBlobCustomers();
@@ -445,7 +596,7 @@ export async function searchCustomers(query: string = "") {
     if (!clean) {
       return mapped
         .sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || "")))
-        .slice(0, 20);
+        .slice(0, take);
     }
     return mapped
       .filter((row) => {
@@ -456,14 +607,14 @@ export async function searchCustomers(query: string = "") {
         return full.includes(clean);
       })
       .sort((a, b) => String(b.lastUsedAt || "").localeCompare(String(a.lastUsedAt || "")))
-      .slice(0, 20);
+      .slice(0, take);
   }
 
   const db = await getDb();
   if (!db) return [];
 
   if (!clean) {
-    const rows = await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(20);
+    const rows = await db.select().from(customers).orderBy(desc(customers.lastUsedAt)).limit(take);
     return rows.map(hydrateCustomer);
   }
 
@@ -481,7 +632,7 @@ export async function searchCustomers(query: string = "") {
       )
     )
     .orderBy(desc(customers.lastUsedAt))
-    .limit(20);
+    .limit(take);
   return rows.map(hydrateCustomer);
 }
 

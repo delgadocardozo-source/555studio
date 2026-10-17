@@ -12,6 +12,10 @@ export interface CustomerCrmCard {
   companyName: string;
   clientTaxId: string;
   vehicles: CustomerVehicle[];
+  cityZone: string;
+  address: string;
+  addressReference: string;
+  locationUrl: string;
   freeWashCredits: number;
   lastWashAt: string | null;
   lastReminderAt: string | null;
@@ -35,6 +39,10 @@ export interface CustomerCrmSource {
   companyName?: string | null;
   clientTaxId?: string | null;
   vehicles?: CustomerVehicle[];
+  cityZone?: string | null;
+  address?: string | null;
+  addressReference?: string | null;
+  locationUrl?: string | null;
   freeWashCredits?: number;
   lastWashAt?: string | null;
   lastReminderAt?: string | null;
@@ -47,6 +55,46 @@ export interface CustomerCrmAppointment {
   status: string;
   paymentStatus?: string | null;
   servicePrice?: number | null;
+  cityZone?: string | null;
+  address?: string | null;
+  addressReference?: string | null;
+  locationUrl?: string | null;
+}
+
+export function resolveClientLocation(params: {
+  profile?: {
+    cityZone?: string | null;
+    address?: string | null;
+    addressReference?: string | null;
+    locationUrl?: string | null;
+  };
+  appointments: Array<{
+    scheduledDate: string;
+    status: string;
+    cityZone?: string | null;
+    address?: string | null;
+    addressReference?: string | null;
+    locationUrl?: string | null;
+  }>;
+}): { cityZone: string; address: string; addressReference: string; locationUrl: string } {
+  const profileAddress = String(params.profile?.address || "").trim();
+  if (profileAddress) {
+    return {
+      cityZone: String(params.profile?.cityZone || "").trim(),
+      address: profileAddress,
+      addressReference: String(params.profile?.addressReference || "").trim(),
+      locationUrl: String(params.profile?.locationUrl || "").trim(),
+    };
+  }
+  const latest = [...params.appointments]
+    .filter((row) => row.status !== "cancelado" && String(row.address || "").trim())
+    .sort((a, b) => String(b.scheduledDate).localeCompare(String(a.scheduledDate)))[0];
+  return {
+    cityZone: String(latest?.cityZone || "").trim(),
+    address: String(latest?.address || "").trim(),
+    addressReference: String(latest?.addressReference || "").trim(),
+    locationUrl: String(latest?.locationUrl || "").trim(),
+  };
 }
 
 export function buildCustomerCrmCard(params: {
@@ -88,6 +136,7 @@ export function buildCustomerCrmCard(params: {
     (d) => params.normalizePhoneKey(d.clientPhone) === key
   );
   const openDebtGs = debts.reduce((s, d) => s + remainingOf(d), 0);
+  const location = resolveClientLocation({ profile: params.customer, appointments: mine });
 
   return {
     phoneKey: key,
@@ -97,6 +146,10 @@ export function buildCustomerCrmCard(params: {
     companyName: String(params.customer.companyName || ""),
     clientTaxId: String(params.customer.clientTaxId || ""),
     vehicles: params.customer.vehicles || [],
+    cityZone: location.cityZone,
+    address: location.address,
+    addressReference: location.addressReference,
+    locationUrl: location.locationUrl,
     freeWashCredits: Number(params.customer.freeWashCredits) || 0,
     lastWashAt: params.customer.lastWashAt || null,
     lastReminderAt: params.customer.lastReminderAt || null,
