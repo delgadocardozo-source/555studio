@@ -1,7 +1,8 @@
 import React from "react";
-import { MessageCircle, RefreshCw, UserPlus } from "lucide-react";
+import { Camera, MessageCircle, RefreshCw, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { receiptViewUrl } from "@/lib/receiptUrl";
 import {
   buildFirstContactWhatsAppText,
   buildReengageWhatsAppText,
@@ -15,6 +16,11 @@ function ContactBadge({ contacted }: { contacted: boolean }) {
       Contactado
     </span>
   );
+}
+
+function prefersFileShare() {
+  if (typeof navigator === "undefined" || typeof navigator.share !== "function") return false;
+  return /Android|iPhone|iPad/i.test(navigator.userAgent);
 }
 
 function WriteButton({
@@ -57,6 +63,44 @@ export function ReengagePanel() {
   const rows = followups.data ?? [];
   const first = firstContacts.data ?? [];
 
+  const sendWithPhoto = async (row: {
+    clientName: string;
+    clientPhone: string;
+    lastWashDate: string;
+    washPhotoUrl: string;
+  }) => {
+    const text = buildReengageWhatsAppText({
+      clientName: row.clientName,
+      lastWashDate: row.lastWashDate,
+      washPhotoUrl: row.washPhotoUrl,
+    });
+    const href = whatsAppChatUrl(row.clientPhone, text);
+    const openChat = () => {
+      window.open(href, "_blank", "noreferrer");
+      markMut.mutate({ phone: row.clientPhone });
+    };
+    try {
+      const res = await fetch(receiptViewUrl(row.washPhotoUrl));
+      if (!res.ok) {
+        openChat();
+        return;
+      }
+      const blob = await res.blob();
+      const type = blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+      const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
+      const file = new File([blob], `auto-lavado.${ext}`, { type });
+      if (!navigator.canShare?.({ files: [file] })) {
+        openChat();
+        return;
+      }
+      await navigator.share({ files: [file], text, title: "555 Detail Studio" });
+      markMut.mutate({ phone: row.clientPhone });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      openChat();
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -68,8 +112,8 @@ export function ReengagePanel() {
             </h2>
             <p className="text-[11px] text-slate-400 mt-0.5">
               Clientes con lavado hace al menos una semana y sin turno nuevo. Escribirles no los
-              saca de la lista: desaparecen solo cuando reservan. El mensaje incluye el link a{" "}
-              <span className="text-emerald-400/90">/agendar</span>.
+              saca de la lista: desaparecen solo cuando reservan. Si el lavado tiene foto, podés
+              mandar el texto solo o con la imagen del auto limpio.
             </p>
           </div>
           <button
@@ -106,19 +150,68 @@ export function ReengagePanel() {
                   className="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{row.clientName}</p>
-                      <p className="text-[11px] text-slate-400">
-                        {row.clientPhone} · lavó {row.lastWashDate} · hace {row.daysSinceWash}d
-                      </p>
+                    <div className="min-w-0 flex items-start gap-2">
+                      {row.washPhotoUrl ? (
+                        <img
+                          src={receiptViewUrl(row.washPhotoUrl)}
+                          alt="Auto lavado"
+                          className="w-12 h-12 rounded-xl object-cover border border-slate-700 shrink-0"
+                        />
+                      ) : null}
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{row.clientName}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {row.clientPhone} · lavó {row.lastWashDate} · hace {row.daysSinceWash}d
+                          {row.washPhotoUrl ? " · con foto" : ""}
+                        </p>
+                      </div>
                     </div>
                     <ContactBadge contacted={Boolean(row.lastReminderAt)} />
                   </div>
-                  <WriteButton
-                    phone={row.clientPhone}
-                    text={text}
-                    onSent={() => markMut.mutate({ phone: row.clientPhone })}
-                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <WriteButton
+                      phone={row.clientPhone}
+                      text={text}
+                      onSent={() => markMut.mutate({ phone: row.clientPhone })}
+                    />
+                    {row.washPhotoUrl ? (
+                      prefersFileShare() ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void sendWithPhoto({
+                              clientName: row.clientName,
+                              clientPhone: row.clientPhone,
+                              lastWashDate: row.lastWashDate,
+                              washPhotoUrl: row.washPhotoUrl || "",
+                            })
+                          }
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-sky-600 text-white"
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          Escribir con foto
+                        </button>
+                      ) : (
+                        <a
+                          href={whatsAppChatUrl(
+                            row.clientPhone,
+                            buildReengageWhatsAppText({
+                              clientName: row.clientName,
+                              lastWashDate: row.lastWashDate,
+                              washPhotoUrl: row.washPhotoUrl,
+                            })
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => markMut.mutate({ phone: row.clientPhone })}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-sky-600 text-white"
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          Escribir con foto
+                        </a>
+                      )
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
