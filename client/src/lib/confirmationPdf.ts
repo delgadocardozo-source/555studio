@@ -11,10 +11,14 @@ function formatGs(amount: number): string {
 function formatDateEs(isoDate: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
   if (!match) return isoDate || "—";
-  const months = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+  const year = Number(match[1]);
+  const monthNum = Number(match[2]);
   const day = Number(match[3]);
-  const month = months[Number(match[2]) - 1] || match[2];
-  return `${day} ${month} ${match[1]}`;
+  const months = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+  const weekdays = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
+  const weekday = weekdays[new Date(year, monthNum - 1, day).getDay()] || "";
+  const month = months[monthNum - 1] || match[2];
+  return `${weekday} ${day} ${month} ${year}`;
 }
 
 function vehicleLabel(count: number): string {
