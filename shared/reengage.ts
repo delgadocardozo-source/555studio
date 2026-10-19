@@ -13,7 +13,11 @@ export interface ReengageCandidate {
   daysSinceWash: number;
   lastReminderAt: string | null;
   hasUpcoming: boolean;
+  /** Foto del último lavado, si se cargó al cerrar el servicio. */
+  washPhotoUrl: string | null;
 }
+
+export const WASH_PHOTO_REENGAGE_LINE = "Hagamos que tu vehículo vuelva a estar así.";
 
 export function daysBetween(fromIsoDate: string, toIsoDate: string): number {
   const a = Date.parse(`${fromIsoDate}T12:00:00`);
@@ -26,12 +30,19 @@ export function buildReengageWhatsAppText(params: {
   clientName: string;
   lastWashDate: string;
   bookingUrl?: string;
+  /** Si hay foto pública, el mensaje suma la frase y el link de la imagen. */
+  washPhotoUrl?: string | null;
 }): string {
   const first = String(params.clientName || "").trim().split(/\s+/)[0] || "hola";
   const url = String(params.bookingUrl || PUBLIC_BOOKING_URL).trim();
+  const photoUrl = String(params.washPhotoUrl || "").trim();
+  const photoBlock = /^https?:\/\//i.test(photoUrl)
+    ? `${WASH_PHOTO_REENGAGE_LINE}\n${photoUrl}\n`
+    : "";
   return (
     `¡Hola ${first}! Somos *555 Detail Studio*.\n\n` +
     `Hace una semana limpiamos tu vehículo (${params.lastWashDate}).\n` +
+    photoBlock +
     `¿Querés agendar de nuevo? Podés responder este mensaje o reservar online:\n` +
     `${url}\n\n` +
     `¡Te esperamos!`
@@ -80,6 +91,7 @@ export function selectReengageCandidates(params: {
     clientName: string;
     scheduledDate: string;
     status: string;
+    washPhotoUrl?: string | null;
   }>;
   customers: Array<{
     phoneKey: string;
@@ -95,7 +107,7 @@ export function selectReengageCandidates(params: {
   const windowDays = params.windowDays;
   const byPhone = new Map<
     string,
-    { name: string; phone: string; lastWash: string; hasUpcoming: boolean }
+    { name: string; phone: string; lastWash: string; hasUpcoming: boolean; washPhotoUrl: string }
   >();
 
   for (const ap of params.appointments) {
@@ -106,12 +118,17 @@ export function selectReengageCandidates(params: {
       phone: ap.clientPhone,
       lastWash: "",
       hasUpcoming: false,
+      washPhotoUrl: "",
     };
     if (ap.status === "finalizado") {
+      const photo = String(ap.washPhotoUrl || "").trim();
       if (!cur.lastWash || ap.scheduledDate > cur.lastWash) {
         cur.lastWash = ap.scheduledDate;
         cur.name = ap.clientName || cur.name;
         cur.phone = ap.clientPhone || cur.phone;
+        cur.washPhotoUrl = photo;
+      } else if (ap.scheduledDate === cur.lastWash && photo && !cur.washPhotoUrl) {
+        cur.washPhotoUrl = photo;
       }
     }
     if (
@@ -142,6 +159,7 @@ export function selectReengageCandidates(params: {
       daysSinceWash: since,
       lastReminderAt,
       hasUpcoming: false,
+      washPhotoUrl: info.washPhotoUrl || null,
     });
   }
 

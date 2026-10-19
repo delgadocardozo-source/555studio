@@ -147,6 +147,9 @@ export const appointments = mysqlTable("appointments", {
   paymentReceiptUrl: varchar("paymentReceiptUrl", { length: 1024 }),
   paymentReceiptName: varchar("paymentReceiptName", { length: 255 }),
   paymentDeclaredAt: timestamp("paymentDeclaredAt"),
+  /** Foto opcional del auto ya lavado, para el recontacto. */
+  washPhotoUrl: varchar("washPhotoUrl", { length: 1024 }),
+  washPhotoName: varchar("washPhotoName", { length: 255 }),
   
   // Origen del alta (interno o futuro portal cliente)
   source: mysqlEnum("source", ["interno_manual", "portal_cliente"]).default("interno_manual").notNull(),

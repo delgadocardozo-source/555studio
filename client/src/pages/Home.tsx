@@ -33,6 +33,7 @@ import {
   GripVertical,
   Briefcase,
   CalendarPlus,
+  Camera,
 } from "lucide-react";
 import { Link } from "wouter";
 import { AgendaCustomersDirectory } from "@/components/CustomersCrmPanel";
@@ -97,6 +98,7 @@ interface FormVehicleItem {
 export default function Home() {
   const utils = trpc.useUtils();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const washPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Estados de navegación y filtros
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -138,13 +140,19 @@ export default function Home() {
     paymentMethod: "efectivo" | "comprobante_digital";
     paymentReceiptUrl: string | null;
     paymentReceiptName: string | null;
+    washPhotoUrl: string | null;
+    washPhotoName: string | null;
     isUploading: boolean;
+    isUploadingPhoto: boolean;
   }>({
     paymentStatus: "pagado",
     paymentMethod: "efectivo",
     paymentReceiptUrl: null,
     paymentReceiptName: null,
+    washPhotoUrl: null,
+    washPhotoName: null,
     isUploading: false,
+    isUploadingPhoto: false,
   });
 
   // Form State con Location URL
@@ -685,6 +693,7 @@ export default function Home() {
   });
 
   const uploadReceiptMutation = trpc.appointments.uploadReceipt.useMutation();
+  const uploadWashPhotoMutation = trpc.appointments.uploadWashPhoto.useMutation();
 
   /** Muestra el comprobante dentro de la app (nunca navega a private.blob → Forbidden). */
   const openReceipt = (url: string, fileName?: string | null) => {
@@ -987,7 +996,10 @@ export default function Home() {
       paymentMethod: app.paymentMethod || "efectivo",
       paymentReceiptUrl: app.paymentReceiptUrl || null,
       paymentReceiptName: app.paymentReceiptName || null,
+      washPhotoUrl: app.washPhotoUrl || null,
+      washPhotoName: app.washPhotoName || null,
       isUploading: false,
+      isUploadingPhoto: false,
     });
     setIsFinalizeModalOpen(true);
   };
@@ -1028,6 +1040,44 @@ export default function Home() {
     reader.readAsDataURL(file);
   };
 
+  const handleWashPhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("La foto del auto tiene que ser una imagen");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("La foto no debe superar los 8MB");
+      return;
+    }
+
+    setFinalizeData((prev) => ({ ...prev, isUploadingPhoto: true }));
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64String = (reader.result as string).split(",")[1];
+        const res = await uploadWashPhotoMutation.mutateAsync({
+          fileName: file.name,
+          contentType: file.type || "image/jpeg",
+          base64Data: base64String,
+        });
+        setFinalizeData((prev) => ({
+          ...prev,
+          washPhotoUrl: res.url,
+          washPhotoName: file.name,
+          isUploadingPhoto: false,
+        }));
+        toast.success("Foto del auto lavado cargada");
+      } catch (err: any) {
+        toast.error("Error al subir la foto: " + (err.message || "desconocido"));
+        setFinalizeData((prev) => ({ ...prev, isUploadingPhoto: false }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleConfirmFinalize = () => {
     if (!selectedAppointment) return;
 
@@ -1044,6 +1094,8 @@ export default function Home() {
       paymentMethod: finalizeData.paymentStatus === "pagado" ? finalizeData.paymentMethod : undefined,
       paymentReceiptUrl: finalizeData.paymentStatus === "pagado" ? finalizeData.paymentReceiptUrl : null,
       paymentReceiptName: finalizeData.paymentStatus === "pagado" ? finalizeData.paymentReceiptName : null,
+      washPhotoUrl: finalizeData.washPhotoUrl,
+      washPhotoName: finalizeData.washPhotoName,
     });
   };
 
@@ -2391,6 +2443,74 @@ export default function Home() {
                 </div>
               )}
 
+              <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-200">
+                    Foto del auto lavado
+                  </label>
+                  <span className="text-[10px] text-slate-500">Opcional · max 8MB</span>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-snug">
+                  Si la agregás, en el recontacto podés mandar el mensaje con esta foto: “Hagamos que tu vehículo vuelva a estar así”.
+                </p>
+                <input
+                  type="file"
+                  ref={washPhotoInputRef}
+                  accept="image/*"
+                  onChange={handleWashPhotoFileChange}
+                  className="hidden"
+                />
+                {finalizeData.washPhotoUrl ? (
+                  <div className="bg-slate-950 border border-emerald-500/40 rounded-2xl p-2.5 flex items-center gap-3">
+                    <img
+                      src={receiptViewUrl(finalizeData.washPhotoUrl)}
+                      alt="Auto lavado"
+                      className="w-16 h-16 rounded-xl object-cover border border-slate-800"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-white truncate">
+                        {finalizeData.washPhotoName || "Foto cargada"}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => washPhotoInputRef.current?.click()}
+                          className="text-[11px] font-bold text-slate-300 px-2 py-1 rounded-lg bg-slate-900"
+                        >
+                          Cambiar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFinalizeData((prev) => ({
+                              ...prev,
+                              washPhotoUrl: null,
+                              washPhotoName: null,
+                            }))
+                          }
+                          className="text-[11px] font-bold text-rose-300 px-2 py-1 rounded-lg bg-rose-500/10"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => washPhotoInputRef.current?.click()}
+                    disabled={finalizeData.isUploadingPhoto}
+                    className="w-full border-2 border-dashed border-slate-700 hover:border-slate-500 bg-slate-950 p-4 rounded-2xl text-center cursor-pointer transition-all touch-manipulation"
+                  >
+                    <Camera className="w-6 h-6 text-slate-400 mx-auto mb-1" />
+                    <div className="text-xs font-bold text-white">
+                      {finalizeData.isUploadingPhoto ? "Cargando foto..." : "Elegir de la galería"}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Sin foto, el recontacto sale solo con el texto</p>
+                  </button>
+                )}
+              </div>
+
               {/* Botones */}
               <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
                 <button
@@ -2403,7 +2523,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleConfirmFinalize}
-                  disabled={finalizeMutation.isPending || finalizeData.isUploading}
+                  disabled={finalizeMutation.isPending || finalizeData.isUploading || finalizeData.isUploadingPhoto}
                   className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-5 py-3 rounded-2xl transition-all shadow-lg shadow-red-600/30 active:scale-95 cursor-pointer touch-manipulation"
                 >
                   {finalizeMutation.isPending ? "Registrando..." : "Confirmar Cierre"}
@@ -3231,6 +3351,16 @@ export default function Home() {
                   <span className="text-slate-400">Cobro:</span>
                   <div>{getPaymentBadge(selectedAppointment.paymentStatus, selectedAppointment.paymentMethod) || <span className="text-slate-500">Pendiente de cierre</span>}</div>
                 </div>
+                {selectedAppointment.washPhotoUrl && (
+                  <div className="pt-1 flex items-center gap-2">
+                    <img
+                      src={receiptViewUrl(selectedAppointment.washPhotoUrl)}
+                      alt="Auto lavado"
+                      className="w-14 h-14 rounded-xl object-cover border border-slate-800"
+                    />
+                    <span className="text-[11px] font-semibold text-slate-300">Foto del auto lavado</span>
+                  </div>
+                )}
                 {selectedAppointment.paymentReceiptUrl && (
                   <div className="pt-1">
                     <button

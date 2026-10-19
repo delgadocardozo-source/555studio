@@ -338,6 +338,8 @@ export const appRouter = router({
           paymentMethod: z.enum(["efectivo", "comprobante_digital"]).optional(),
           paymentReceiptUrl: z.string().optional().nullable(),
           paymentReceiptName: z.string().optional().nullable(),
+          washPhotoUrl: z.string().optional().nullable(),
+          washPhotoName: z.string().optional().nullable(),
         })
       )
       .mutation(async ({ input }) => {
@@ -370,6 +372,38 @@ export const appRouter = router({
         }
 
         const stored = await storagePut(key, buffer, input.contentType || "application/octet-stream");
+        return { key: stored.key, url: stored.url };
+      }),
+
+    /** Foto opcional del auto ya lavado. Pública para que WhatsApp pueda mostrarla. */
+    uploadWashPhoto: staffProcedure
+      .input(z.object({ fileName: z.string(), contentType: z.string(), base64Data: z.string() }))
+      .mutation(async ({ input }) => {
+        if (!input.contentType.startsWith("image/")) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La foto del auto tiene que ser una imagen",
+          });
+        }
+        const buffer = Buffer.from(input.base64Data, "base64");
+        if (buffer.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "La foto está vacía" });
+        }
+        if (buffer.length > 8 * 1024 * 1024) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "La foto no debe superar los 8MB" });
+        }
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const key = `555-detail-agenda/wash-photos/${Date.now()}-${safeName}`;
+
+        if (process.env.BLOB_READ_WRITE_TOKEN) {
+          const stored = await putBlob(key, buffer, {
+            access: "public",
+            contentType: input.contentType || "image/jpeg",
+          });
+          return { key: stored.pathname, url: stored.url };
+        }
+
+        const stored = await storagePut(key, buffer, input.contentType || "image/jpeg");
         return { key: stored.key, url: stored.url };
       }),
 
