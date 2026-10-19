@@ -641,6 +641,20 @@ export async function searchCustomers(query: string = "", limit = 20) {
   return rows.map(hydrateCustomer);
 }
 
+/** Todos los clientes, sin el tope de la búsqueda de agenda. */
+export async function listAllCustomers() {
+  if (isVercelBlobRuntime()) {
+    const rows = await readBlobCustomers();
+    return rows
+      .map(hydrateCustomer)
+      .sort((a, b) => String(a.clientName || "").localeCompare(String(b.clientName || ""), "es"));
+  }
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(customers).orderBy(customers.clientName);
+  return rows.map(hydrateCustomer);
+}
+
 export async function findCustomerByPhone(phone: string) {
   const phoneKey = normalizePhoneKey(phone);
   if (!phoneKey) return null;

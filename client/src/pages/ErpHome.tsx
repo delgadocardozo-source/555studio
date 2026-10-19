@@ -25,6 +25,7 @@ import { ReengagePanel } from "@/components/ReengagePanel";
 import { ErpControlPanel } from "@/components/ErpControlPanel";
 import { CustomersCrmPanel } from "@/components/CustomersCrmPanel";
 import { StaffLogoutButton } from "@/components/StaffGate";
+import { ReportsExcelButton } from "@/components/ReportsExcelButton";
 
 type ErpModule =
   | "control"
@@ -219,6 +220,7 @@ export default function ErpHome() {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <ReportsExcelButton />
             {module !== "control" && (
               <Link
                 href="/erp"
