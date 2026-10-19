@@ -33,6 +33,7 @@ import * as washRecipeDb from "./washRecipeDb";
 import * as erpControlDb from "./erpControlDb";
 import * as invoicingDb from "./invoicingDb";
 import * as cashCloseDb from "./cashCloseDb";
+import { buildOperationalExcel } from "./operationalReports";
 import { hashPin, pinMatches, setStaffCookie, clearStaffCookie, signStaffToken, readStaffCookie, staffTokenValid } from "./staffAccess";
 import { readStaffSecret, writeStaffSecret } from "./staffAccessDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
@@ -656,7 +657,11 @@ export const appRouter = router({
       }),
   }),
 
-  /** Centro de control ERP — KPIs cruzados. */
+  /** Un Excel con todas las hojas para cruzar agenda, caja, facturas y clientes. */
+  reports: router({
+    excel: staffProcedure.query(async () => await buildOperationalExcel()),
+  }),
+
   erp: router({
     controlTower: staffProcedure
       .input(

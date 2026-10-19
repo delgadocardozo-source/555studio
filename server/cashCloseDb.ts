@@ -97,6 +97,33 @@ function view(summary: CashDaySummary, saved: StoredClose | undefined): CashDayC
   };
 }
 
+export async function listCashDayCloses(): Promise<
+  Array<{
+    date: string;
+    efectivoIn: number;
+    comprobanteIn: number;
+    egresos: number;
+    expectedDrawer: number;
+    counted: number;
+    difference: number;
+    note: string;
+  }>
+> {
+  const rows = await readStored();
+  return rows
+    .map((row) => ({
+      date: row.date,
+      efectivoIn: row.efectivoIn,
+      comprobanteIn: row.comprobanteIn,
+      egresos: row.egresos,
+      expectedDrawer: row.expectedDrawer,
+      counted: row.counted,
+      difference: row.counted - row.expectedDrawer,
+      note: row.note || "",
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 export async function getCashDay(date: string): Promise<CashDayClose> {
   const movements = await listCashMovements({ dateFrom: date, dateTo: date });
   const summary = summarizeCashDay(movements, date);
