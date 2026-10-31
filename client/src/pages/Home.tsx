@@ -222,7 +222,7 @@ export default function Home() {
     };
   }, [activeTab, selectedDate, cityFilter, statusFilter, paymentFilter, vehicleFilter, clientTypeFilter, searchQuery]);
 
-  const { data: appointments = [], isLoading: listLoading } = trpc.appointments.list.useQuery(queryFilters);
+  const { data: appointments = [], isLoading: listLoading, error: listError } = trpc.appointments.list.useQuery(queryFilters);
 
   const { data: formDayAppointments = [] } = trpc.appointments.list.useQuery(
     { date: formData.scheduledDate },
@@ -1140,24 +1140,36 @@ export default function Home() {
     return washerRouteUrl(window.location.origin, token, date);
   };
 
+  const washerHref = washerLink.data?.token
+    ? washerRouteUrl(window.location.origin, washerLink.data.token, selectedDate)
+    : "";
+
+  const handleOpenWasherLink = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (washerHref) {
+      navigator.clipboard.writeText(washerHref).catch(() => undefined);
+      return;
+    }
+    event.preventDefault();
+    void (async () => {
+      try {
+        const url = await washerUrlFor(selectedDate);
+        if (!url) {
+          toast.error(washerLink.error?.message || "No se pudo abrir las órdenes");
+          return;
+        }
+        navigator.clipboard.writeText(url).catch(() => undefined);
+        window.location.assign(url);
+      } catch (error: any) {
+        toast.error(error?.message || "No se pudo abrir las órdenes");
+      }
+    })();
+  };
+
   const dayListSource = useMemo(
     () => (activeTab === "calendario" ? appointments : appointments.filter((a) => a.scheduledDate === selectedDate)),
     [activeTab, appointments, selectedDate]
   );
 
-  const handleCopyWasherLink = async () => {
-    try {
-      const url = await washerUrlFor(selectedDate);
-      if (!url) {
-        toast.error("No se pudo armar el link del lavador");
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      toast.success("Link de las órdenes copiado");
-    } catch (error: any) {
-      toast.error(error?.message || "No se pudo copiar el link");
-    }
-  };
 
   const handleDownloadDayList = async () => {
     try {
@@ -1458,15 +1470,18 @@ export default function Home() {
                 Hoy
               </button>
 
-              <button
-                type="button"
-                onClick={handleCopyWasherLink}
-                className="sm:hidden p-1.5 rounded-lg text-slate-200 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
-                aria-label="Copiar link de las órdenes"
-                title="Link de las órdenes, sin montos"
+              <a
+                href={washerHref || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleOpenWasherLink}
+                className="sm:hidden inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-100 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
+                aria-label="Abrir las órdenes"
+                title="Abrir las órdenes, sin montos"
               >
                 <Link2 className="w-4 h-4 text-red-400" />
-              </button>
+                Ver
+              </a>
               <button
                 type="button"
                 onClick={handleDownloadDayList}
@@ -1636,15 +1651,17 @@ export default function Home() {
                     <Printer className="w-3.5 h-3.5 text-red-400" />
                     Lavador
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyWasherLink}
+                  <a
+                    href={washerHref || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={handleOpenWasherLink}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
-                    title="Copiar el link de todas las órdenes, sin montos"
+                    title="Abrir todas las órdenes, sin montos"
                   >
                     <Link2 className="w-3.5 h-3.5 text-red-400" />
-                    Órdenes
-                  </button>
+                    Ver órdenes
+                  </a>
                   <button
                     type="button"
                     onClick={handleShareDayList}
@@ -1997,6 +2014,15 @@ export default function Home() {
         {/* VISTA 2: LISTA DE ÓRDENES */}
         {activeTab === "ordenes" && (
           <div className="space-y-3">
+            {listError ? (
+              <p className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-6 text-center text-sm font-semibold text-red-200">
+                {listError.message || "No se pudieron cargar las órdenes"}
+              </p>
+            ) : appointments.length === 0 ? (
+              <p className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-10 text-center text-sm text-slate-300">
+                {listLoading ? "Cargando órdenes…" : "No hay órdenes para mostrar."}
+              </p>
+            ) : null}
             {/* Mobile: Tarjetas táctiles */}
             <div className="block lg:hidden space-y-3">
               {appointments.map((app) => (
