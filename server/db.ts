@@ -1135,6 +1135,20 @@ async function postFinalizeInvoice(existing: {
   }
 }
 
+/** Foto del lavado, buscada por código de la orden. No cambia precio ni cobro. */
+export async function saveWashPhotoByCode(code: string, photo: { url: string; name: string }) {
+  const needle = String(code || "").trim();
+  if (!needle) throw new Error("Falta el código de la orden");
+  const rows = await listAppointments({});
+  const existing = rows.find((row) => String(row.code || "") === needle);
+  if (!existing?.id) throw new Error("No está esa orden");
+  if (existing.status === "cancelado") throw new Error("Esa orden está cancelada");
+  return await updateAppointmentDetails(Number(existing.id), {
+    washPhotoUrl: photo.url,
+    washPhotoName: photo.name.slice(0, 255),
+  });
+}
+
 export async function updateAppointmentDetails(
   id: number,
   data: Partial<Omit<InsertAppointment, "id" | "code" | "createdAt" | "updatedAt">>

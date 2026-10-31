@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import ErpHome from "./pages/ErpHome";
 import BookingPage from "./pages/BookingPage";
+import WasherRoutePage from "./pages/WasherRoutePage";
 import { StaffGate } from "./components/StaffGate";
 
 function GuardedHome() {
@@ -30,6 +31,7 @@ function Router() {
     <Switch>
       <Route path="/" component={GuardedHome} />
       <Route path="/agendar" component={BookingPage} />
+      <Route path="/lavar/:token" component={WasherRoutePage} />
       <Route path="/erp" component={GuardedErp} />
       <Route path="/erp/tablero" component={GuardedErp} />
       <Route path="/erp/caja" component={GuardedErp} />

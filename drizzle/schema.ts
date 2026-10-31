@@ -147,7 +147,10 @@ export const appointments = mysqlTable("appointments", {
   paymentReceiptUrl: varchar("paymentReceiptUrl", { length: 1024 }),
   paymentReceiptName: varchar("paymentReceiptName", { length: 255 }),
   paymentDeclaredAt: timestamp("paymentDeclaredAt"),
-  
+  /** Foto del auto ya lavado. La carga el colaborador desde el link de órdenes. */
+  washPhotoUrl: varchar("washPhotoUrl", { length: 1024 }),
+  washPhotoName: varchar("washPhotoName", { length: 255 }),
+
   // Origen del alta (interno o futuro portal cliente)
   source: mysqlEnum("source", ["interno_manual", "portal_cliente"]).default("interno_manual").notNull(),
 
@@ -181,6 +184,13 @@ export const cashMovements = mysqlTable("cash_movements", {
 
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type InsertCashMovement = typeof cashMovements.$inferInsert;
+
+/** Link largo de la ruta del lavador. Una sola fila. No es la clave del ERP. */
+export const washerLinks = mysqlTable("washer_links", {
+  id: int("id").autoincrement().primaryKey(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
 
 /** Clave compartida del equipo. Una sola fila. */
 export const staffAccess = mysqlTable("staff_access", {

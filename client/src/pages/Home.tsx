@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Navigation,
   Share2,
+  Link2,
   X,
   CheckCircle2,
   AlertTriangle,
@@ -38,6 +39,7 @@ import { Link } from "wouter";
 import { AgendaCustomersDirectory } from "@/components/CustomersCrmPanel";
 import { StaffLogoutButton } from "@/components/StaffGate";
 import { toast } from "sonner";
+import { washerRouteUrl } from "@shared/washerRoute";
 import { buildConfirmationFile, buildConfirmationText } from "@/lib/confirmationPdf";
 import { buildDayServicesFile, buildDayServicesText } from "@/lib/dayServicesListPdf";
 import { isLikelyPdfReceipt, receiptViewUrl } from "@/lib/receiptUrl";
@@ -1130,16 +1132,39 @@ export default function Home() {
     window.open(`https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(confirmationText(app))}`, "_blank", "noopener,noreferrer");
   };
 
+  const washerLink = trpc.washer.link.useQuery();
+
+  const washerUrlFor = async (date: string) => {
+    const token = washerLink.data?.token ?? (await washerLink.refetch()).data?.token;
+    if (!token) return "";
+    return washerRouteUrl(window.location.origin, token, date);
+  };
+
   const dayListSource = useMemo(
     () => (activeTab === "calendario" ? appointments : appointments.filter((a) => a.scheduledDate === selectedDate)),
     [activeTab, appointments, selectedDate]
   );
 
+  const handleCopyWasherLink = async () => {
+    try {
+      const url = await washerUrlFor(selectedDate);
+      if (!url) {
+        toast.error("No se pudo armar el link del lavador");
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success("Link de las órdenes copiado");
+    } catch (error: any) {
+      toast.error(error?.message || "No se pudo copiar el link");
+    }
+  };
+
   const handleDownloadDayList = async () => {
     try {
-      const { doc, fileName } = await buildDayServicesFile(selectedDate, dayListSource);
+      const link = await washerUrlFor(selectedDate);
+      const { doc, fileName } = await buildDayServicesFile(selectedDate, dayListSource, link);
       doc.save(fileName);
-      toast.success("Lista del día descargada (PDF)");
+      toast.success("Hoja para el que lava descargada");
     } catch (error: any) {
       toast.error(`No se pudo generar la lista: ${error?.message || "error"}`);
     }
@@ -1147,9 +1172,10 @@ export default function Home() {
 
   const handleShareDayList = async () => {
     try {
-      const { doc, fileName, file, text } = await buildDayServicesFile(selectedDate, dayListSource);
+      const link = await washerUrlFor(selectedDate);
+      const { doc, fileName, file, text } = await buildDayServicesFile(selectedDate, dayListSource, link);
       const shareData = {
-        title: `Servicios ${selectedDate}`,
+        title: "Para el que lava",
         text,
         files: [file],
       };
@@ -1170,7 +1196,7 @@ export default function Home() {
         // ignore clipboard failures
       }
       doc.save(fileName);
-      toast.success("PDF descargado. Texto copiado: pegalo en WhatsApp para el equipo.");
+      toast.success("PDF descargado. Texto copiado: pegalo en WhatsApp para el que lava.");
     } catch (error: any) {
       toast.error(`No se pudo compartir la lista: ${error?.message || "error"}`);
     }
@@ -1178,7 +1204,8 @@ export default function Home() {
 
   const handleCopyDayListText = async () => {
     try {
-      const text = buildDayServicesText(selectedDate, dayListSource);
+      const link = await washerUrlFor(selectedDate);
+      const text = buildDayServicesText(selectedDate, dayListSource, link);
       await navigator.clipboard.writeText(text);
       toast.success("Lista copiada. Pegala en WhatsApp para enviar los lavados.");
     } catch (error: any) {
@@ -1433,10 +1460,19 @@ export default function Home() {
 
               <button
                 type="button"
+                onClick={handleCopyWasherLink}
+                className="sm:hidden p-1.5 rounded-lg text-slate-200 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
+                aria-label="Copiar link de las órdenes"
+                title="Link de las órdenes, sin montos"
+              >
+                <Link2 className="w-4 h-4 text-red-400" />
+              </button>
+              <button
+                type="button"
                 onClick={handleDownloadDayList}
                 className="sm:hidden p-1.5 rounded-lg text-slate-200 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
-                aria-label="Imprimir lista del día"
-                title="Lista del día"
+                aria-label="Hoja para el que lava"
+                title="Hoja para el que lava"
               >
                 <Printer className="w-4 h-4 text-red-400" />
               </button>
@@ -1595,16 +1631,25 @@ export default function Home() {
                     type="button"
                     onClick={handleDownloadDayList}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
-                    title="Descargar PDF de la lista del día"
+                    title="Descargar la hoja para el que lava"
                   >
                     <Printer className="w-3.5 h-3.5 text-red-400" />
-                    PDF
+                    Lavador
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyWasherLink}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
+                    title="Copiar el link de todas las órdenes, sin montos"
+                  >
+                    <Link2 className="w-3.5 h-3.5 text-red-400" />
+                    Órdenes
                   </button>
                   <button
                     type="button"
                     onClick={handleShareDayList}
                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20 active:scale-95"
-                    title="Compartir lista del día con el equipo"
+                    title="Enviar la hoja al que lava"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                     Enviar

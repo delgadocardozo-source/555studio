@@ -34,6 +34,9 @@ import * as erpControlDb from "./erpControlDb";
 import * as invoicingDb from "./invoicingDb";
 import * as cashCloseDb from "./cashCloseDb";
 import { buildOperationalExcel } from "./operationalReports";
+import { getOrCreateWasherToken, washerTokenValid } from "./washerLinkDb";
+import { storeWashPhoto } from "./washerPhoto";
+import { toWasherStops } from "@shared/washerRoute";
 import { hashPin, pinMatches, setStaffCookie, clearStaffCookie, signStaffToken, readStaffCookie, staffTokenValid } from "./staffAccess";
 import { readStaffSecret, writeStaffSecret } from "./staffAccessDb";
 import { PAYMENT_CONCEPTS, STAFF_PAY_TYPES, STAFF_ROLES } from "@shared/payroll";
@@ -652,6 +655,68 @@ export const appRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: err?.message || "No se pudo guardar el cliente",
+          });
+        }
+      }),
+  }),
+
+  /** Órdenes para el colaborador. El token no abre el ERP ni muestra montos. */
+  washer: router({
+    link: staffProcedure.query(async () => ({ token: await getOrCreateWasherToken() })),
+
+    day: publicProcedure
+      .input(
+        z.object({
+          token: z.string().min(16),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        })
+      )
+      .query(async ({ input }) => {
+        const valid = await washerTokenValid(input.token);
+        if (!valid) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Este link no es de la ruta" });
+        }
+        const rows = await db.listAppointments({ date: input.date });
+        return { date: input.date, stops: toWasherStops(rows) };
+      }),
+
+    orders: publicProcedure
+      .input(z.object({ token: z.string().min(16) }))
+      .query(async ({ input }) => {
+        const valid = await washerTokenValid(input.token);
+        if (!valid) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Este link no es de la ruta" });
+        }
+        const rows = await db.listAppointments({});
+        return { orders: toWasherStops(rows) };
+      }),
+
+    addPhoto: publicProcedure
+      .input(
+        z.object({
+          token: z.string().min(16),
+          code: z.string().min(4).max(32),
+          fileName: z.string().min(1).max(180),
+          contentType: z.string().min(1).max(80),
+          base64Data: z.string().min(1),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const valid = await washerTokenValid(input.token);
+        if (!valid) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Este link no es de la ruta" });
+        }
+        try {
+          const url = await storeWashPhoto(input);
+          const saved = await db.saveWashPhotoByCode(input.code, { url, name: input.fileName });
+          const [order] = toWasherStops(saved ? [saved] : []);
+          if (!order) throw new Error("No se pudo guardar la foto");
+          return { order };
+        } catch (err: any) {
+          if (err instanceof TRPCError) throw err;
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err?.message || "No se pudo guardar la foto",
           });
         }
       }),

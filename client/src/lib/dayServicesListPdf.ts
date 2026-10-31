@@ -9,10 +9,6 @@ import { LOGO_555_PNG_BASE64 } from "./logo555Base64";
 
 const LOGO_DATA_URL = `data:image/png;base64,${LOGO_555_PNG_BASE64}`;
 
-function formatGs(amount: number): string {
-  return `${Number(amount || 0).toLocaleString("es-PY")} Gs.`;
-}
-
 function formatDateEs(isoDate: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
   if (!match) return isoDate || "—";
@@ -30,9 +26,13 @@ function formatDateEs(isoDate: string): string {
     "noviembre",
     "diciembre",
   ];
+  const year = Number(match[1]);
+  const monthNum = Number(match[2]);
   const day = Number(match[3]);
-  const month = months[Number(match[2]) - 1] || match[2];
-  return `${day} de ${month} de ${match[1]}`;
+  const weekdays = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const weekday = weekdays[new Date(year, monthNum - 1, day).getDay()] || "";
+  const month = months[monthNum - 1] || match[2];
+  return `${weekday}, ${day} de ${month} de ${year}`;
 }
 
 function formatDateFile(isoDate: string): string {
@@ -108,14 +108,16 @@ export function sortDayAppointments(appointments: any[]): any[] {
     });
 }
 
-/** Texto plano para WhatsApp / copiar al equipo móvil. */
-export function buildDayServicesText(date: string, appointments: any[]): string {
+/** Texto plano para WhatsApp del que lava. */
+export function buildDayServicesText(date: string, appointments: any[], link?: string): string {
   const rows = sortDayAppointments(appointments);
   const pending = rows.filter((a) => isPendingWashStatus(a.status));
   const autos = pending.reduce((sum, a) => sum + appointmentVehicleCount(a), 0);
   const lines: string[] = [
     "555 DETAIL STUDIO",
-    `Servicios del día — ${formatDateEs(date)}`,
+    "Para el que lava",
+    formatDateEs(date),
+    ...(link ? [link] : []),
     `${pending.length} a lavar · ${autos} auto(s)`,
     "",
   ];
@@ -129,11 +131,13 @@ export function buildDayServicesText(date: string, appointments: any[]): string 
     const n = idx + 1;
     lines.push(`${n}) ${displayTimeSlot(app)} · ${statusLabel(app.status)}`);
     lines.push(`   ${app.clientName || "—"} · ${app.clientPhone || "sin tel"}`);
+    if (app.companyName) lines.push(`   ${app.companyName}`);
     lines.push(`   ${vehicleLine(app)}`);
     lines.push(`   ${app.cityZone || ""}: ${app.address || "—"}`);
+    if (app.addressReference) lines.push(`   Referencia: ${app.addressReference}`);
     if (app.locationUrl) lines.push(`   GPS: ${app.locationUrl}`);
     if (app.notes) lines.push(`   Nota: ${app.notes}`);
-    lines.push(`   ${formatGs(app.servicePrice)} · ${app.code || ""}`);
+    if (app.code) lines.push(`   ${app.code}`);
     lines.push("");
   });
 
@@ -145,9 +149,9 @@ function wrapText(doc: jsPDF, text: string, maxWidth: number): string[] {
 }
 
 /**
- * Lista operativa A4 (hoja de ruta) para imprimir o enviar al equipo.
+ * Hoja A4 para el que lava: día de la semana, horario, dirección y autos.
  */
-export async function createDayServicesPdf(date: string, appointments: any[]) {
+export async function createDayServicesPdf(date: string, appointments: any[], link?: string) {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -176,7 +180,7 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     doc.setTextColor(18, 18, 18);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
-    doc.text("Lista de servicios del día", marginX + 26, y + 7);
+    doc.text("Para el que lava", marginX + 26, y + 7);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
@@ -202,6 +206,17 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
 
   let pageNum = 1;
   let y = drawHeader(pageNum);
+  if (link) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(20, 90, 160);
+    const linkLines = wrapText(doc, `Ruta: ${link}`, contentW);
+    linkLines.forEach((line) => {
+      doc.text(line, marginX, y);
+      y += 3.4;
+    });
+    y += 1.5;
+  }
 
   if (rows.length === 0) {
     doc.setFont("helvetica", "normal");
@@ -215,7 +230,7 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     if (y + needed <= pageH - 14) return;
     doc.setFontSize(7.5);
     doc.setTextColor(150, 150, 150);
-    doc.text("555 Detail Studio · hoja de ruta operativa", pageW / 2, pageH - 6, { align: "center" });
+    doc.text("555 Detail Studio · para el que lava", pageW / 2, pageH - 6, { align: "center" });
     doc.addPage();
     pageNum += 1;
     y = drawHeader(pageNum);
@@ -228,9 +243,19 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
       `${app.cityZone || ""}: ${app.address || "—"}`,
       contentW - 4
     );
+    const referenceLines = app.addressReference
+      ? wrapText(doc, `Referencia: ${app.addressReference}`, contentW - 4)
+      : [];
     const noteLines = app.notes ? wrapText(doc, `Nota: ${app.notes}`, contentW - 4) : [];
+    const companyH = app.companyName ? 4 : 0;
     const blockH =
-      18 + vehicles.length * 4.2 + addressLines.length * 3.8 + noteLines.length * 3.6 + (app.locationUrl ? 4 : 0);
+      18 +
+      companyH +
+      vehicles.length * 4.2 +
+      addressLines.length * 3.8 +
+      referenceLines.length * 3.6 +
+      noteLines.length * 3.6 +
+      (app.locationUrl ? 4 : 0);
 
     ensureSpace(blockH + 4);
 
@@ -265,6 +290,13 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     doc.text(String(app.clientPhone || ""), pageW - marginX - 3, cy, { align: "right" });
     cy += 4.5;
 
+    if (app.companyName) {
+      doc.setFontSize(8);
+      doc.setTextColor(70, 70, 70);
+      doc.text(String(app.companyName), left, cy);
+      cy += 4;
+    }
+
     vehicles.forEach((v) => {
       const kind = v.type === "camioneta" ? "Camioneta" : "Auto";
       const plate = v.plate ? `  [${v.plate}]` : "";
@@ -279,6 +311,13 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     addressLines.forEach((line) => {
       doc.text(line, left, cy);
       cy += 3.6;
+    });
+
+    referenceLines.forEach((line) => {
+      doc.setTextColor(70, 70, 70);
+      doc.setFontSize(8);
+      doc.text(line, left, cy);
+      cy += 3.4;
     });
 
     if (app.locationUrl) {
@@ -296,10 +335,6 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
       cy += 3.4;
     });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(180, 25, 30);
-    doc.text(formatGs(app.servicePrice), left, y + blockH - 3);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(130, 130, 130);
     doc.setFontSize(7);
@@ -310,19 +345,19 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
 
   doc.setFontSize(7.5);
   doc.setTextColor(150, 150, 150);
-  doc.text("555 Detail Studio · hoja de ruta operativa", pageW / 2, pageH - 6, { align: "center" });
+  doc.text("555 Detail Studio · para el que lava", pageW / 2, pageH - 6, { align: "center" });
 
   return doc;
 }
 
-export async function buildDayServicesFile(date: string, appointments: any[]) {
-  const doc = await createDayServicesPdf(date, appointments);
-  const fileName = `servicios-${formatDateFile(date)}.pdf`;
+export async function buildDayServicesFile(date: string, appointments: any[], link?: string) {
+  const doc = await createDayServicesPdf(date, appointments, link);
+  const fileName = `para-el-que-lava-${formatDateFile(date)}.pdf`;
   const blob = doc.output("blob");
   return {
     doc,
     fileName,
     file: new File([blob], fileName, { type: "application/pdf" }),
-    text: buildDayServicesText(date, appointments),
+    text: buildDayServicesText(date, appointments, link),
   };
 }
