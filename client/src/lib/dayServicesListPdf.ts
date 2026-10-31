@@ -30,9 +30,13 @@ function formatDateEs(isoDate: string): string {
     "noviembre",
     "diciembre",
   ];
+  const year = Number(match[1]);
+  const monthNum = Number(match[2]);
   const day = Number(match[3]);
-  const month = months[Number(match[2]) - 1] || match[2];
-  return `${day} de ${month} de ${match[1]}`;
+  const weekdays = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const weekday = weekdays[new Date(year, monthNum - 1, day).getDay()] || "";
+  const month = months[monthNum - 1] || match[2];
+  return `${weekday}, ${day} de ${month} de ${year}`;
 }
 
 function formatDateFile(isoDate: string): string {
@@ -108,14 +112,15 @@ export function sortDayAppointments(appointments: any[]): any[] {
     });
 }
 
-/** Texto plano para WhatsApp / copiar al equipo móvil. */
+/** Texto plano para WhatsApp del que lava. */
 export function buildDayServicesText(date: string, appointments: any[]): string {
   const rows = sortDayAppointments(appointments);
   const pending = rows.filter((a) => isPendingWashStatus(a.status));
   const autos = pending.reduce((sum, a) => sum + appointmentVehicleCount(a), 0);
   const lines: string[] = [
     "555 DETAIL STUDIO",
-    `Servicios del día — ${formatDateEs(date)}`,
+    "Para el que lava",
+    formatDateEs(date),
     `${pending.length} a lavar · ${autos} auto(s)`,
     "",
   ];
@@ -145,7 +150,7 @@ function wrapText(doc: jsPDF, text: string, maxWidth: number): string[] {
 }
 
 /**
- * Lista operativa A4 (hoja de ruta) para imprimir o enviar al equipo.
+ * Hoja A4 para el que lava: día de la semana, horario, dirección y autos.
  */
 export async function createDayServicesPdf(date: string, appointments: any[]) {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
@@ -176,7 +181,7 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     doc.setTextColor(18, 18, 18);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
-    doc.text("Lista de servicios del día", marginX + 26, y + 7);
+    doc.text("Para el que lava", marginX + 26, y + 7);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
@@ -215,7 +220,7 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
     if (y + needed <= pageH - 14) return;
     doc.setFontSize(7.5);
     doc.setTextColor(150, 150, 150);
-    doc.text("555 Detail Studio · hoja de ruta operativa", pageW / 2, pageH - 6, { align: "center" });
+    doc.text("555 Detail Studio · para el que lava", pageW / 2, pageH - 6, { align: "center" });
     doc.addPage();
     pageNum += 1;
     y = drawHeader(pageNum);
@@ -310,14 +315,14 @@ export async function createDayServicesPdf(date: string, appointments: any[]) {
 
   doc.setFontSize(7.5);
   doc.setTextColor(150, 150, 150);
-  doc.text("555 Detail Studio · hoja de ruta operativa", pageW / 2, pageH - 6, { align: "center" });
+  doc.text("555 Detail Studio · para el que lava", pageW / 2, pageH - 6, { align: "center" });
 
   return doc;
 }
 
 export async function buildDayServicesFile(date: string, appointments: any[]) {
   const doc = await createDayServicesPdf(date, appointments);
-  const fileName = `servicios-${formatDateFile(date)}.pdf`;
+  const fileName = `para-el-que-lava-${formatDateFile(date)}.pdf`;
   const blob = doc.output("blob");
   return {
     doc,
