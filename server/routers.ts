@@ -680,17 +680,6 @@ export const appRouter = router({
         return { date: input.date, stops: toWasherStops(rows) };
       }),
 
-    orders: publicProcedure
-      .input(z.object({ token: z.string().min(16) }))
-      .query(async ({ input }) => {
-        const valid = await washerTokenValid(input.token);
-        if (!valid) {
-          throw new TRPCError({ code: "UNAUTHORIZED", message: "Este link no es de la ruta" });
-        }
-        const rows = await db.listAppointments({});
-        return { orders: toWasherStops(rows) };
-      }),
-
     addPhoto: publicProcedure
       .input(
         z.object({
