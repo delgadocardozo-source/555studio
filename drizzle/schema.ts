@@ -182,6 +182,13 @@ export const cashMovements = mysqlTable("cash_movements", {
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type InsertCashMovement = typeof cashMovements.$inferInsert;
 
+/** Link largo de la ruta del lavador. Una sola fila. No es la clave del ERP. */
+export const washerLinks = mysqlTable("washer_links", {
+  id: int("id").autoincrement().primaryKey(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 /** Clave compartida del equipo. Una sola fila. */
 export const staffAccess = mysqlTable("staff_access", {
   id: int("id").autoincrement().primaryKey(),
