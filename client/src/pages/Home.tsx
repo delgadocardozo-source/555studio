@@ -1153,7 +1153,7 @@ export default function Home() {
         return;
       }
       await navigator.clipboard.writeText(url);
-      toast.success("Link del lavador copiado");
+      toast.success("Link de las órdenes copiado");
     } catch (error: any) {
       toast.error(error?.message || "No se pudo copiar el link");
     }
@@ -1462,8 +1462,8 @@ export default function Home() {
                 type="button"
                 onClick={handleCopyWasherLink}
                 className="sm:hidden p-1.5 rounded-lg text-slate-200 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
-                aria-label="Copiar link del lavador"
-                title="Link del lavador"
+                aria-label="Copiar link de las órdenes"
+                title="Link de las órdenes, sin montos"
               >
                 <Link2 className="w-4 h-4 text-red-400" />
               </button>
@@ -1640,10 +1640,10 @@ export default function Home() {
                     type="button"
                     onClick={handleCopyWasherLink}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
-                    title="Copiar el link exclusivo para el que lava"
+                    title="Copiar el link de todas las órdenes, sin montos"
                   >
                     <Link2 className="w-3.5 h-3.5 text-red-400" />
-                    Link
+                    Órdenes
                   </button>
                   <button
                     type="button"
