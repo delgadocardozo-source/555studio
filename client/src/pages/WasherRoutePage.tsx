@@ -195,7 +195,11 @@ export default function WasherRoutePage() {
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
 
       <main className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 py-4 pb-12">
-        {board.isLoading ? (
+        {token.length < 16 ? (
+          <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-center text-sm font-semibold text-red-700">
+            Este link está incompleto. Volvé a abrirlo desde la agenda.
+          </p>
+        ) : board.isLoading ? (
           <p className="py-10 text-center text-sm text-neutral-500">Cargando las órdenes…</p>
         ) : board.error ? (
           <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-center text-sm font-semibold text-red-700">
