@@ -1476,8 +1476,8 @@ export default function Home() {
                 rel="noopener noreferrer"
                 onClick={handleOpenWasherLink}
                 className="sm:hidden inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-100 bg-slate-800 border border-slate-700 active:scale-95 touch-manipulation"
-                aria-label="Abrir las órdenes"
-                title="Abrir las órdenes, sin montos"
+                aria-label="Abrir las órdenes del día"
+                title="Abrir las órdenes del día, sin montos"
               >
                 <Link2 className="w-4 h-4 text-red-400" />
                 Ver
@@ -1657,10 +1657,10 @@ export default function Home() {
                     rel="noopener noreferrer"
                     onClick={handleOpenWasherLink}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-slate-100 hover:border-red-500/50 active:scale-95"
-                    title="Abrir todas las órdenes, sin montos"
+                    title="Abrir las órdenes del día, sin montos"
                   >
                     <Link2 className="w-3.5 h-3.5 text-red-400" />
-                    Ver órdenes
+                    Ver el día
                   </a>
                   <button
                     type="button"
